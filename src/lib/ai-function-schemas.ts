@@ -152,6 +152,43 @@ export const AI_EDITOR_FUNCTION_SCHEMAS: FunctionSchema[] = [
       },
       required: ['keyword']
     }
+  },
+  {
+    name: 'test_file',
+    description: '執行測試檔案。用於驗證代碼修改後的功能正確性。',
+    parameters: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description: '測試檔案路徑'
+        }
+      },
+      required: ['path']
+    }
+  },
+  {
+    name: 'complete_task',
+    description: '標記任務完成。當 AI 確認所有問題都已解決且沒有錯誤時使用此工具。這會結束自動修正循環。',
+    parameters: {
+      type: 'object',
+      properties: {
+        summary: {
+          type: 'string',
+          description: '任務完成摘要，說明完成了什麼工作'
+        },
+        status: {
+          type: 'string',
+          enum: ['success', 'partial', 'failed'],
+          description: '完成狀態：success(完全成功), partial(部分完成), failed(失敗)'
+        },
+        details: {
+          type: 'string',
+          description: '詳細說明，包括解決的問題、執行的操作等'
+        }
+      },
+      required: ['summary', 'status']
+    }
   }
 ];
 
@@ -227,7 +264,8 @@ export type AIToolName =
   | 'get_project_context'
   | 'get_git_diff'
   | 'get_terminal_output'
-  | 'test_file';
+  | 'test_file'
+  | 'complete_task';
 
 // 工具參數類型定義
 export interface AIToolParameters {
@@ -241,7 +279,8 @@ export interface AIToolParameters {
   get_project_context: {};
   get_git_diff: {};
   get_terminal_output: {};
-  test_file: { filePath: string };
+  test_file: { path: string };
+  complete_task: { summary: string; status: string; details: string };
 }
 
 // 工具回應類型定義
@@ -268,6 +307,7 @@ export interface AIToolResponses {
   get_git_diff: string;
   get_terminal_output: string[];
   test_file: { stdout: string; stderr: string; exitCode: number };
+  complete_task: { summary: string; status: string; details: string };
 }
 
 // 工具調用介面

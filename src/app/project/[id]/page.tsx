@@ -146,9 +146,9 @@ export default function ProjectPage({ params }: Props) {
       {/* 主要內容區域 */}
       <div className="flex h-[calc(100vh-4rem)]">
         {/* 左側面板 - 聊天與 TODO */}
-        <div className="w-1/2 flex flex-col border-r border-gray-200 dark:border-gray-700">
+        <div className="w-1/2 flex flex-col border-r border-gray-200 dark:border-gray-700 h-full">
           {/* Tab 切換 */}
-          <div className="flex border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+          <div className="flex border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 flex-shrink-0">
             <button 
               onClick={() => setActiveTab('chat')}
               className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${
@@ -172,27 +172,29 @@ export default function ProjectPage({ params }: Props) {
           </div>
           
           {/* 內容區域 */}
-          {activeTab === 'chat' ? (
-            <ChatInterface projectName={project.name} />
-          ) : (
-            <div className="flex-1 flex flex-col bg-white dark:bg-gray-800">
-              <div className="flex-1 p-4">
-                <div className="text-center py-12">
-                  <div className="text-4xl mb-4">📝</div>
-                  <h4 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
-                    TODO 功能開發中
-                  </h4>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">
-                    專案任務管理功能即將推出
-                  </p>
+          <div className="flex-1 min-h-0">
+            {activeTab === 'chat' ? (
+              <ChatInterface projectName={project.name} />
+            ) : (
+              <div className="flex-1 flex flex-col bg-white dark:bg-gray-800 h-full">
+                <div className="flex-1 p-4">
+                  <div className="text-center py-12">
+                    <div className="text-4xl mb-4">📝</div>
+                    <h4 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
+                      TODO 功能開發中
+                    </h4>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">
+                      專案任務管理功能即將推出
+                    </p>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
 
         {/* 右側面板 - 實時預覽 */}
-        <div className="w-1/2 flex flex-col bg-white dark:bg-gray-800">
+        <div className="w-1/2 flex flex-col bg-white dark:bg-gray-800 h-full">
           {/* 預覽控制欄 */}
           <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
             <div className="flex items-center space-x-4">

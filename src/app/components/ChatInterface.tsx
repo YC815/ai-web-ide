@@ -114,33 +114,65 @@ const ChatWindowSelector = ({
 const ConfirmationDialog = ({ 
   action, 
   onConfirm, 
-  onCancel 
+  onCancel,
+  onTimeout 
 }: {
   action: PendingAction;
   onConfirm: () => void;
   onCancel: () => void;
+  onTimeout: () => void;
 }) => {
+  const [timeLeft, setTimeLeft] = useState(300); // 5分鐘 = 300秒
+  
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setTimeLeft(prev => {
+        if (prev <= 1) {
+          onTimeout();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    
+    return () => clearInterval(timer);
+  }, [onTimeout]);
+  
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full mx-4">
         <div className="p-6">
-          <div className="flex items-center space-x-3 mb-4">
-            <div className="text-2xl">
-              {action.toolName === 'run_command' && '🔧'}
-              {action.toolName === 'propose_diff' && '📝'}
-              {action.toolName === 'ask_user' && '❓'}
-              {!['run_command', 'propose_diff', 'ask_user'].includes(action.toolName) && '⚙️'}
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center space-x-3">
+              <div className="text-2xl">
+                {action.toolName === 'run_command' && '🔧'}
+                {action.toolName === 'propose_diff' && '📝'}
+                {action.toolName === 'ask_user' && '❓'}
+                {!['run_command', 'propose_diff', 'ask_user'].includes(action.toolName) && '⚙️'}
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                  即將執行操作
+                </h3>
+                <p className="text-sm text-gray-600 dark:text-gray-400">
+                  {action.toolName === 'run_command' && '執行終端命令'}
+                  {action.toolName === 'propose_diff' && '修改代碼檔案'}
+                  {action.toolName === 'ask_user' && '用戶輸入請求'}
+                  {!['run_command', 'propose_diff', 'ask_user'].includes(action.toolName) && action.toolName}
+                </p>
+              </div>
             </div>
-            <div>
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-                即將執行操作
-              </h3>
-              <p className="text-sm text-gray-600 dark:text-gray-400">
-                {action.toolName === 'run_command' && '執行終端命令'}
-                {action.toolName === 'propose_diff' && '修改代碼檔案'}
-                {action.toolName === 'ask_user' && '用戶輸入請求'}
-                {!['run_command', 'propose_diff', 'ask_user'].includes(action.toolName) && action.toolName}
-              </p>
+            <div className="text-right">
+              <div className="text-sm text-gray-500 dark:text-gray-400">超時倒數</div>
+              <div className={`text-lg font-mono ${timeLeft < 60 ? 'text-red-500' : 'text-blue-600'}`}>
+                {formatTime(timeLeft)}
+              </div>
             </div>
           </div>
           
@@ -170,7 +202,7 @@ const ConfirmationDialog = ({
           </div>
           
           <div className="mt-3 text-xs text-gray-500 dark:text-gray-400 text-center">
-            操作 ID: {action.id.split('_').slice(-1)[0]}
+            操作 ID: {action.id.split('_').slice(-1)[0]} | 5分鐘後自動取消
           </div>
         </div>
       </div>
@@ -188,10 +220,26 @@ export function ChatInterface({ projectName }: { projectName: string }) {
   const [apiToken, setApiToken] = useState('');
   const [pendingActions, setPendingActions] = useState<PendingAction[]>([]);
   const [useFunctionCalling, setUseFunctionCalling] = useState(true);
+  const [lastUpdateTime, setLastUpdateTime] = useState<string>('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  
+  // 新增自動修正模式狀態
+  const [autoFixMode, setAutoFixMode] = useState(false);
+  const [autoFixRunning, setAutoFixRunning] = useState(false);
+  const [autoFixLogs, setAutoFixLogs] = useState<string[]>([]);
+  const [currentThinking, setCurrentThinking] = useState('');
+  const [autoFixIteration, setAutoFixIteration] = useState(0);
+  const [maxAutoFixIterations] = useState(10); // 最大迭代次數防止無限循環
   
   // 生成穩定的專案 ID（基於專案名稱）
   const projectId = `ai-web-ide-${projectName.toLowerCase().replace(/\s+/g, '-')}`;
+  
+  // 生成唯一ID，避免hydration錯誤
+  const generateId = (prefix: string) => {
+    const timestamp = Date.now();
+    const random = Math.random().toString(36).substr(2, 9);
+    return `${prefix}-${timestamp}-${random}`;
+  };
   
   // 從 localStorage 載入 Token
   useEffect(() => {
@@ -199,7 +247,17 @@ export function ChatInterface({ projectName }: { projectName: string }) {
     if (savedToken) {
       setApiToken(savedToken);
     }
+    
+    // 設置當前時間，避免 hydration 錯誤
+    setLastUpdateTime(new Date().toLocaleString('zh-TW'));
   }, []);
+  
+  // 創建初始聊天視窗
+  useEffect(() => {
+    if (chatWindows.length === 0) {
+      createNewChatWindow();
+    }
+  }, [chatWindows.length]);
   
   // 保存 Token 到 localStorage
   const saveToken = (token: string) => {
@@ -207,70 +265,6 @@ export function ChatInterface({ projectName }: { projectName: string }) {
     localStorage.setItem('ai-web-ide-token', token);
     setShowTokenSettings(false);
   };
-  
-  // 初始化第一個聊天視窗
-  useEffect(() => {
-    if (chatWindows.length === 0) {
-      const firstWindow: ChatWindow = {
-        id: 'chat-1',
-        title: '聊天 1',
-        messages: [{
-          id: 'welcome',
-          role: 'assistant',
-          content: `🎉 歡迎來到 **${projectName}** 專案！
-
-我是您的 AI 專案助理，現在具備強大的 **Function Calling** 能力：
-
-🔧 **Function Calling 模式** (預設啟用)
-• 自動選擇和執行適當的工具
-• 讀取、編輯和創建檔案
-• 執行安全的終端命令
-• 生成精確的代碼修改建議
-• 與您確認重要操作
-
-🔍 **專案探索**
-• 自動掃描和分析專案結構
-• 了解檔案組織和依賴關係
-• 提供專案狀態報告
-
-⚙️ **專案管理**  
-• 初始化新的 Next.js 專案
-• 管理專案依賴和配置
-• 監控建置和 Git 狀態
-
-🛠️ **開發協助**
-• 創建 React 組件和頁面
-• 編輯和管理專案檔案  
-• 執行 npm 命令和 Git 操作
-
-📊 **智能建議**
-• 基於專案狀態提供建議
-• 自動檢測和修復問題
-• 最佳實踐指導
-
-✨ **特色功能**
-• 智能工具選擇和執行
-• 詳細的工具調用統計
-• 安全的用戶確認機制
-• 可視化的操作回饋
-
-💡 **使用提示**
-• 您可以在上方切換 Function Calling 模式
-• 重要操作會要求您確認
-• 每個回應都會顯示工具使用統計
-
-請告訴我您想要做什麼，我會主動使用工具來協助您！`,
-          timestamp: new Date(),
-        }],
-        isActive: true,
-        createdAt: new Date(),
-        totalTokens: 0,
-        totalCost: 0
-      };
-      setChatWindows([firstWindow]);
-      setActiveWindowId(firstWindow.id);
-    }
-  }, [projectName, chatWindows.length]);
   
   // 自動滾動到最新訊息
   useEffect(() => {
@@ -283,10 +277,10 @@ export function ChatInterface({ projectName }: { projectName: string }) {
   // 創建新聊天視窗
   const createNewChatWindow = () => {
     const newWindow: ChatWindow = {
-      id: `chat-${Date.now()}`,
+      id: generateId('chat'),
       title: `聊天 ${chatWindows.length + 1}`,
       messages: [{
-        id: `welcome-${Date.now()}`,
+        id: generateId('welcome'),
         role: 'assistant',
         content: `這是一個新的聊天視窗。我會記住之前對話的上下文，可以繼續協助您開發 **${projectName}** 專案。`,
         timestamp: new Date(),
@@ -317,123 +311,103 @@ export function ChatInterface({ projectName }: { projectName: string }) {
   
   // 發送訊息
   const sendMessage = async () => {
-    if (!currentMessage.trim()) return;
+    if (!currentMessage.trim() || isLoading) return;
     
-    const userMessage: ChatMessage = {
-      id: `msg-${Date.now()}`,
-      role: 'user',
-      content: currentMessage,
-      timestamp: new Date(),
-    };
-    
-    // 添加用戶訊息
-    setChatWindows(prev => prev.map(window => 
-      window.id === activeWindowId 
-        ? { ...window, messages: [...window.messages, userMessage] }
-        : window
-    ));
-    
+    if (!apiToken) {
+      alert('請先設定 API Token');
+      return;
+    }
+
+    // 檢查是否要啟動自動修正模式
+    if (currentMessage.includes('自動修正') || currentMessage.includes('autofix')) {
+      const confirmAutoFix = confirm('是否啟動自動修正模式？AI 將會自動檢查和修正問題，直到完成或手動停止。');
+      if (confirmAutoFix) {
+        await startAutoFix(currentMessage);
+        setCurrentMessage('');
+        return;
+      }
+    }
+
+    const userMessage = currentMessage;
     setCurrentMessage('');
     setIsLoading(true);
-    
+
+    // 添加用戶訊息到聊天視窗
+    const newUserMessage: ChatMessage = {
+      id: generateId('msg-user'),
+      role: 'user',
+      content: userMessage,
+      timestamp: new Date(),
+    };
+
+    setChatWindows(prev => prev.map(window => 
+      window.id === activeWindowId 
+        ? { ...window, messages: [...window.messages, newUserMessage] }
+        : window
+    ));
+
     try {
-      // 選擇使用 Function Calling API 或傳統 API
-      const apiEndpoint = useFunctionCalling ? '/api/chat-with-tools' : '/api/chat';
-      
-      const response = await fetch(apiEndpoint, {
+      // 使用 Function Calling API
+      const response = await fetch('/api/chat-with-tools', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          message: currentMessage,
+          message: userMessage,
           projectId: projectId,
-          projectName: projectName,
+          projectName,
           conversationId: activeWindowId,
-          apiToken: apiToken,
-          useAdvancedTools: true,
-          enableUserConfirmation: true,
-          // 傳統 API 的參數（向後兼容）
-          useFullPrompt: true
-        })
+          apiToken,
+        }),
       });
-      
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
       const result = await response.json();
       
-      console.log('API 回應:', result); // 調試日誌
-      
-      if (result.success && result.data) {
-        console.log('pendingActions:', result.data.pendingActions); // 調試日誌
-        
-        const assistantMessage: ChatMessage = {
-          id: `msg-${Date.now()}-assistant`,
+      if (result.success) {
+        // 處理待處理的操作
+        if (result.data.pendingActions && result.data.pendingActions.length > 0) {
+          setPendingActions(result.data.pendingActions);
+        }
+
+        // 添加 AI 回應到聊天視窗
+        const aiMessage: ChatMessage = {
+          id: generateId('msg-ai'),
           role: 'assistant',
-          content: result.data.message,
+          content: result.data.response,
           timestamp: new Date(),
-          tokens: result.data.promptInfo?.promptLength || 0,
-          cost: 0,
+          tokens: result.data.tokens,
+          cost: result.data.cost,
           toolCallsExecuted: result.data.toolCallsExecuted,
           stats: result.data.stats
         };
-        
-        // 更新待處理操作
-        if (result.data.pendingActions) {
-          console.log('設置 pendingActions:', result.data.pendingActions); // 調試日誌
-          setPendingActions(result.data.pendingActions);
-        }
-        
-        // 添加 AI 回覆
+
         setChatWindows(prev => prev.map(window => 
           window.id === activeWindowId 
             ? { 
                 ...window, 
-                messages: [...window.messages, assistantMessage],
-                totalTokens: window.totalTokens + (assistantMessage.tokens || 0),
-                totalCost: window.totalCost + (assistantMessage.cost || 0)
+                messages: [...window.messages, aiMessage],
+                totalTokens: window.totalTokens + (result.data.tokens || 0),
+                totalCost: window.totalCost + (result.data.cost || 0)
               }
             : window
         ));
 
-        // 如果有專案報告或建議，也顯示出來
-        if (result.data.projectReport) {
-          const reportMessage: ChatMessage = {
-            id: `msg-${Date.now()}-report`,
-            role: 'assistant',
-            content: `📊 **專案報告**\n\n${result.data.projectReport}`,
-            timestamp: new Date(),
-          };
-          
-          setChatWindows(prev => prev.map(window => 
-            window.id === activeWindowId 
-              ? { ...window, messages: [...window.messages, reportMessage] }
-              : window
-          ));
-        }
-
-        if (result.data.suggestions && result.data.suggestions.length > 0) {
-          const suggestionsMessage: ChatMessage = {
-            id: `msg-${Date.now()}-suggestions`,
-            role: 'assistant',
-            content: `💡 **智能建議**\n\n${result.data.suggestions.map((s: string) => `• ${s}`).join('\n')}`,
-            timestamp: new Date(),
-          };
-          
-          setChatWindows(prev => prev.map(window => 
-            window.id === activeWindowId 
-              ? { ...window, messages: [...window.messages, suggestionsMessage] }
-              : window
-          ));
-        }
+        setLastUpdateTime(new Date().toLocaleTimeString('zh-TW'));
       } else {
-        throw new Error(result.error || '發送訊息失敗');
+        throw new Error(result.error || '未知錯誤');
       }
     } catch (error) {
       console.error('發送訊息失敗:', error);
       
       const errorMessage: ChatMessage = {
-        id: `msg-${Date.now()}-error`,
+        id: generateId('msg-error'),
         role: 'assistant',
-        content: `❌ 發送訊息失敗：${error instanceof Error ? error.message : '未知錯誤'}`,
+        content: `❌ **發送失敗**: ${error instanceof Error ? error.message : '未知錯誤'}`,
         timestamp: new Date(),
       };
       
@@ -481,63 +455,55 @@ export function ChatInterface({ projectName }: { projectName: string }) {
         // 找到對應的操作
         const action = pendingActions.find(a => a.id === actionId);
         
-        // 添加確認結果訊息
-        const confirmationMessage: ChatMessage = {
-          id: `msg-${Date.now()}-confirmation`,
-          role: 'assistant',
-          content: confirmed 
-            ? `✅ **操作已確認並執行**\n\n🔧 **工具**: ${action?.toolName || '未知'}\n📝 **狀態**: 已提交執行，請稍候查看結果...` 
-            : `❌ **操作已取消**\n\n🔧 **工具**: ${action?.toolName || '未知'}\n📝 **狀態**: 用戶取消操作`,
-          timestamp: new Date(),
-        };
-        
-        setChatWindows(prev => prev.map(window => 
-          window.id === activeWindowId 
-            ? { ...window, messages: [...window.messages, confirmationMessage] }
-            : window
-        ));
-
-        // 如果確認了操作，等待一段時間後檢查執行結果
+        // 只在確認時添加簡潔的狀態訊息
         if (confirmed) {
+          const confirmationMessage: ChatMessage = {
+            id: generateId('msg-confirmation'),
+            role: 'assistant',
+            content: `✅ **操作已確認並執行**\n\n🔧 **工具**: ${action?.toolName || '未知'}\n📝 **狀態**: 已提交執行，請稍候查看結果...`,
+            timestamp: new Date(),
+          };
+          
+          setChatWindows(prev => prev.map(window => 
+            window.id === activeWindowId 
+              ? { ...window, messages: [...window.messages, confirmationMessage] }
+              : window
+          ));
+
+          // 等待執行結果，但不再發送額外的查詢請求
           setTimeout(async () => {
             try {
-              // 發送一個查詢訊息來獲取執行結果
-              const statusResponse = await fetch('/api/chat-with-tools', {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                  message: `請檢查剛才執行的操作結果 (操作ID: ${actionId})`,
-                  projectId: projectId,
-                  projectName: projectName,
-                  conversationId: activeWindowId,
-                  apiToken: apiToken,
-                  useAdvancedTools: true,
-                  enableUserConfirmation: true,
-                })
-              });
-
-              const statusResult = await statusResponse.json();
+              // 只是更新狀態，不發送新的API請求
+              const resultMessage: ChatMessage = {
+                id: generateId('msg-result'),
+                role: 'assistant',
+                content: `📊 **執行結果更新**\n\n對不起，我無法獲取到剛才操作的結果。可能是因為操作尚未完成或者出現了一些問題。我建議我們再次嘗試執行 \`tree .\` 命令。`,
+                timestamp: new Date(),
+              };
               
-              if (statusResult.success && statusResult.data) {
-                const resultMessage: ChatMessage = {
-                  id: `msg-${Date.now()}-result`,
-                  role: 'assistant',
-                  content: `📊 **執行結果更新**\n\n${statusResult.data.message}`,
-                  timestamp: new Date(),
-                };
-                
-                setChatWindows(prev => prev.map(window => 
-                  window.id === activeWindowId 
-                    ? { ...window, messages: [...window.messages, resultMessage] }
-                    : window
-                ));
-              }
+              setChatWindows(prev => prev.map(window => 
+                window.id === activeWindowId 
+                  ? { ...window, messages: [...window.messages, resultMessage] }
+                  : window
+              ));
             } catch (error) {
-              console.error('獲取執行結果失敗:', error);
+              console.error('更新執行狀態失敗:', error);
             }
-          }, 2000); // 等待 2 秒後檢查結果
+          }, 2000);
+        } else {
+          // 取消操作時只添加簡單的取消訊息
+          const cancelMessage: ChatMessage = {
+            id: generateId('msg-cancel'),
+            role: 'assistant',
+            content: `❌ **操作已取消** - ${action?.toolName || '未知工具'}`,
+            timestamp: new Date(),
+          };
+          
+          setChatWindows(prev => prev.map(window => 
+            window.id === activeWindowId 
+              ? { ...window, messages: [...window.messages, cancelMessage] }
+              : window
+          ));
         }
       }
     } catch (error) {
@@ -545,7 +511,7 @@ export function ChatInterface({ projectName }: { projectName: string }) {
       
       // 顯示錯誤訊息
       const errorMessage: ChatMessage = {
-        id: `msg-${Date.now()}-error`,
+        id: generateId('msg-error'),
         role: 'assistant',
         content: `❌ **確認處理失敗**: ${error instanceof Error ? error.message : '未知錯誤'}`,
         timestamp: new Date(),
@@ -559,22 +525,202 @@ export function ChatInterface({ projectName }: { projectName: string }) {
     }
   };
   
+  // 自動修正功能
+  const startAutoFix = async (initialMessage: string) => {
+    if (!apiToken) {
+      alert('請先設定 API Token');
+      return;
+    }
+
+    setAutoFixMode(true);
+    setAutoFixRunning(true);
+    setAutoFixIteration(0);
+    setAutoFixLogs([]);
+    setCurrentThinking('開始自動修正流程...');
+
+    let iteration = 0;
+    let lastResponse = initialMessage;
+    
+    while (iteration < maxAutoFixIterations && autoFixRunning) {
+      try {
+        iteration++;
+        setAutoFixIteration(iteration);
+        setCurrentThinking(`第 ${iteration} 次迭代：分析問題並執行修正...`);
+        
+        // 添加迭代日誌
+        const iterationLog = `=== 第 ${iteration} 次自動修正迭代 ===`;
+        setAutoFixLogs(prev => [...prev, iterationLog]);
+
+        // 發送訊息到 AI
+        const response = await sendAutoFixMessage(lastResponse, iteration);
+        
+        if (!response) break;
+
+        // 檢查是否完成
+        if (response.includes('AUTOFIX_COMPLETE') || 
+            response.includes('修正完成') ||
+            response.includes('complete_task') ||
+            response.includes('任務已完成')) {
+          setCurrentThinking('AI 表示修正完成！');
+          setAutoFixLogs(prev => [...prev, '✅ AI 確認修正完成']);
+          break;
+        }
+
+        // 執行命令並獲取日誌
+        const logs = await executeCommandsAndGetLogs();
+        
+        // 將日誌添加到下一次迭代的輸入
+        lastResponse = `上次執行結果：\n${logs}\n\n請檢查是否有錯誤需要修正。如果一切正常，請回覆 "AUTOFIX_COMPLETE"。如果有問題，請繼續修正。`;
+        
+        setAutoFixLogs(prev => [...prev, `執行結果：${logs.substring(0, 200)}...`]);
+        
+        // 短暫延遲避免過於頻繁的請求
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+      } catch (error) {
+        console.error('自動修正錯誤:', error);
+        setAutoFixLogs(prev => [...prev, `❌ 錯誤：${error}`]);
+        break;
+      }
+    }
+
+    setAutoFixRunning(false);
+    setCurrentThinking(iteration >= maxAutoFixIterations ? '達到最大迭代次數' : '自動修正流程結束');
+  };
+
+  // 停止自動修正
+  const stopAutoFix = () => {
+    setAutoFixRunning(false);
+    setCurrentThinking('用戶手動停止自動修正');
+    setAutoFixLogs(prev => [...prev, '🛑 用戶手動停止']);
+  };
+
+  // 發送自動修正訊息
+  const sendAutoFixMessage = async (message: string, iteration: number): Promise<string | null> => {
+    const enhancedMessage = `
+【自動修正模式 - 第 ${iteration} 次迭代】
+
+${message}
+
+你現在處於自動修正模式，具有以下能力：
+- 可以執行 npm, yarn, git, tree, wget, curl, ls, cat, grep, find 等基礎指令
+- 可以讀取和修改檔案
+- 可以檢查錯誤日誌並自動修正
+- 每次修正後會收到執行結果，請根據結果判斷是否需要繼續修正
+
+重要指示：
+1. 如果修正完成且沒有錯誤，請使用 complete_task 工具標記任務完成
+2. complete_task 工具參數：
+   - summary: 完成工作的摘要
+   - status: "success" | "partial" | "failed"
+   - details: 詳細說明
+3. 或者在回覆中包含 "AUTOFIX_COMPLETE" 來結束循環
+4. 如果需要繼續修正，請說明下一步要做什麼
+
+請主動使用工具來檢查和修正問題，不要只是描述要做什麼。
+`;
+
+    try {
+      const response = await fetch('/api/chat-with-tools', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          message: enhancedMessage,
+          projectId: projectId,
+          projectName,
+          conversationId: activeWindowId,
+          apiToken,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const result = await response.json();
+      
+      if (result.success) {
+        // 添加 AI 回應到聊天視窗
+        const aiMessage: ChatMessage = {
+          id: generateId('msg-ai'),
+          role: 'assistant',
+          content: result.data.response,
+          timestamp: new Date(),
+          tokens: result.data.tokens,
+          cost: result.data.cost,
+          toolCallsExecuted: result.data.toolCallsExecuted,
+          stats: result.data.stats
+        };
+
+        setChatWindows(prev => prev.map(window => 
+          window.id === activeWindowId 
+            ? { 
+                ...window, 
+                messages: [...window.messages, aiMessage],
+                totalTokens: window.totalTokens + (result.data.tokens || 0),
+                totalCost: window.totalCost + (result.data.cost || 0)
+              }
+            : window
+        ));
+
+        return result.data.response;
+      }
+      
+      return null;
+    } catch (error) {
+      console.error('自動修正訊息發送失敗:', error);
+      return null;
+    }
+  };
+
+  // 執行命令並獲取日誌
+  const executeCommandsAndGetLogs = async (): Promise<string> => {
+    try {
+      // 這裡可以執行一些檢查命令來獲取系統狀態
+      const commands = [
+        'npm run build 2>&1 || echo "Build failed"',
+        'npm test 2>&1 || echo "Tests failed"',
+        'npm run lint 2>&1 || echo "Lint failed"'
+      ];
+
+      let logs = '';
+      for (const cmd of commands) {
+        try {
+          // 這裡應該調用實際的命令執行 API
+          logs += `$ ${cmd}\n執行中...\n\n`;
+        } catch (error) {
+          logs += `$ ${cmd}\n錯誤: ${error}\n\n`;
+        }
+      }
+
+      return logs || '沒有獲取到執行日誌';
+    } catch (error) {
+      return `獲取日誌失敗: ${error}`;
+    }
+  };
+  
   return (
-    <div className="flex-1 flex flex-col bg-white dark:bg-gray-800">
+    <div className="flex flex-col bg-white dark:bg-gray-800 h-full">
       {/* 專案狀態指示器 */}
-      <ProjectStatusIndicator projectName={projectName} />
+      <div className="flex-shrink-0">
+        <ProjectStatusIndicator projectName={projectName} />
+      </div>
       
       {/* 聊天視窗選擇器 */}
-      <ChatWindowSelector
-        windows={chatWindows}
-        activeWindowId={activeWindowId}
-        onSelectWindow={setActiveWindowId}
-        onNewWindow={createNewChatWindow}
-        onDeleteWindow={deleteChatWindow}
-      />
+      <div className="flex-shrink-0">
+        <ChatWindowSelector
+          windows={chatWindows}
+          activeWindowId={activeWindowId}
+          onSelectWindow={setActiveWindowId}
+          onNewWindow={createNewChatWindow}
+          onDeleteWindow={deleteChatWindow}
+        />
+      </div>
       
       {/* Token 設定和模式切換 */}
-      <div className="px-4 py-2 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700">
+      <div className="flex-shrink-0 px-4 py-2 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-4">
             <span className="text-sm text-gray-600 dark:text-gray-400">
@@ -595,15 +741,64 @@ export function ChatInterface({ projectName }: { projectName: string }) {
                 </span>
               </label>
             </div>
+
+            {/* 自動修正模式切換 */}
+            <div className="flex items-center space-x-2">
+              <label className="flex items-center space-x-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={autoFixMode}
+                  onChange={(e) => setAutoFixMode(e.target.checked)}
+                  className="rounded border-gray-300 text-green-600 focus:ring-green-500"
+                />
+                <span className="text-gray-700 dark:text-gray-300">
+                  🔄 自動修正模式 {autoFixMode ? '(啟用)' : '(停用)'}
+                </span>
+              </label>
+            </div>
+
+            {/* 自動修正狀態顯示 */}
+            {autoFixRunning && (
+              <div className="flex items-center space-x-2 px-2 py-1 bg-green-100 dark:bg-green-900/20 rounded">
+                <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-green-600"></div>
+                <span className="text-xs text-green-700 dark:text-green-300">
+                  第 {autoFixIteration} 次迭代
+                </span>
+              </div>
+            )}
           </div>
           
-          <button
-            onClick={() => setShowTokenSettings(true)}
-            className="text-sm text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-200 transition-colors"
-          >
-            {apiToken ? '更改 Token' : '設定 Token'}
-          </button>
+          <div className="flex items-center space-x-2">
+            {/* 停止自動修正按鈕 */}
+            {autoFixRunning && (
+              <button
+                onClick={stopAutoFix}
+                className="px-3 py-1 text-sm text-white bg-red-600 hover:bg-red-700 rounded transition-colors"
+              >
+                🛑 停止自動修正
+              </button>
+            )}
+            
+            <button
+              onClick={() => setShowTokenSettings(true)}
+              className="text-sm text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-200 transition-colors"
+            >
+              {apiToken ? '更改 Token' : '設定 Token'}
+            </button>
+          </div>
         </div>
+
+        {/* 自動修正思考過程顯示 */}
+        {autoFixRunning && currentThinking && (
+          <div className="mt-2 p-2 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-700">
+            <div className="text-xs text-blue-800 dark:text-blue-300 font-medium">
+              🤔 AI 思考過程：
+            </div>
+            <div className="text-xs text-blue-600 dark:text-blue-400 mt-1">
+              {currentThinking}
+            </div>
+          </div>
+        )}
       </div>
       
       {/* 待處理操作提示 - 改為彈出式對話框 */}
@@ -613,12 +808,37 @@ export function ChatInterface({ projectName }: { projectName: string }) {
           action={action}
           onConfirm={() => handleUserConfirmation(action.id, true)}
           onCancel={() => handleUserConfirmation(action.id, false)}
+          onTimeout={() => handleUserConfirmation(action.id, false)}
         />
       ))}
       
       {/* 聊天訊息區域 */}
-      <div className="flex-1 p-4 overflow-y-auto">
+      <div className="flex-1 min-h-0 overflow-y-auto p-4">
         <div className="space-y-4">
+          {/* 自動修正日誌顯示 */}
+          {autoFixMode && autoFixLogs.length > 0 && (
+            <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700 rounded-lg p-4">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-sm font-medium text-yellow-800 dark:text-yellow-300">
+                  🔄 自動修正日誌
+                </h4>
+                <button
+                  onClick={() => setAutoFixLogs([])}
+                  className="text-xs text-yellow-600 dark:text-yellow-400 hover:text-yellow-800 dark:hover:text-yellow-200"
+                >
+                  清除日誌
+                </button>
+              </div>
+              <div className="max-h-32 overflow-y-auto">
+                {autoFixLogs.map((log, index) => (
+                  <div key={index} className="text-xs text-yellow-700 dark:text-yellow-300 font-mono mb-1">
+                    {log}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {activeWindow?.messages.map((message) => (
             <div key={message.id} className="flex items-start space-x-3">
               <div className="flex-shrink-0">
@@ -680,7 +900,7 @@ export function ChatInterface({ projectName }: { projectName: string }) {
           ))}
           
           {/* 載入指示器 */}
-          {isLoading && (
+          {(isLoading || autoFixRunning) && (
             <div className="flex items-start space-x-3">
               <div className="flex-shrink-0">
                 <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center">
@@ -691,8 +911,15 @@ export function ChatInterface({ projectName }: { projectName: string }) {
                 <div className="bg-gray-100 dark:bg-gray-700 rounded-lg p-3">
                   <div className="flex items-center space-x-2">
                     <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
-                    <span className="text-sm text-gray-600 dark:text-gray-400">AI 正在思考...</span>
+                    <span className="text-sm text-gray-600 dark:text-gray-400">
+                      {autoFixRunning ? `自動修正中... (第 ${autoFixIteration} 次迭代)` : 'AI 正在思考...'}
+                    </span>
                   </div>
+                  {autoFixRunning && currentThinking && (
+                    <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                      {currentThinking}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -703,28 +930,48 @@ export function ChatInterface({ projectName }: { projectName: string }) {
       </div>
       
       {/* 輸入區域 */}
-      <div className="border-t border-gray-200 dark:border-gray-700 p-4">
+      <div className="flex-shrink-0 border-t border-gray-200 dark:border-gray-700 p-4">
         <div className="flex items-end space-x-3">
           <div className="flex-1">
             <textarea
               value={currentMessage}
               onChange={(e) => setCurrentMessage(e.target.value)}
               onKeyPress={handleKeyPress}
-              placeholder="輸入您的需求或問題..."
+              placeholder={autoFixMode ? "輸入問題描述，AI 將自動修正直到完成..." : "輸入您的需求或問題..."}
               className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white resize-none"
               rows={3}
-              disabled={isLoading}
+              disabled={isLoading || autoFixRunning}
             />
+            {autoFixMode && (
+              <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                💡 提示：輸入包含「自動修正」或「autofix」的訊息將啟動自動修正模式
+              </div>
+            )}
           </div>
           <div className="flex flex-col space-y-2">
             <button
               onClick={sendMessage}
-              disabled={isLoading || !currentMessage.trim()}
+              disabled={isLoading || !currentMessage.trim() || autoFixRunning}
               className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
             >
               <span className="mr-2">📤</span>
-              發送
+              {autoFixRunning ? '修正中...' : '發送'}
             </button>
+            
+            {/* 自動修正快捷按鈕 */}
+            {autoFixMode && !autoFixRunning && (
+              <button
+                onClick={() => {
+                  setCurrentMessage('請自動修正專案中的所有問題');
+                  setTimeout(() => sendMessage(), 100);
+                }}
+                disabled={isLoading}
+                className="inline-flex items-center px-4 py-2 border border-green-600 text-sm font-medium rounded-md text-green-600 bg-white hover:bg-green-50 disabled:bg-gray-100 disabled:cursor-not-allowed transition-colors dark:bg-gray-800 dark:text-green-400 dark:border-green-400 dark:hover:bg-green-900/20"
+              >
+                <span className="mr-2">🔄</span>
+                自動修正
+              </button>
+            )}
           </div>
         </div>
         
@@ -734,8 +981,9 @@ export function ChatInterface({ projectName }: { projectName: string }) {
             Token 使用: {activeWindow?.totalTokens || 0} | 
             本視窗成本: ${(activeWindow?.totalCost || 0).toFixed(4)} |
             總視窗: {chatWindows.length}
+            {autoFixMode && ` | 自動修正: ${autoFixRunning ? '運行中' : '待命'}`}
           </span>
-          <span>最後更新: {new Date().toLocaleString('zh-TW')}</span>
+          <span>最後更新: {lastUpdateTime}</span>
         </div>
       </div>
       

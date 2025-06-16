@@ -13,6 +13,23 @@
 - **AI 邏輯問題分析**：目前 AI 助理的意圖分析過於簡化，導致所有請求都被歸類為專案探索，需要重新設計意圖分析邏輯和工具調用機制
 - **AI 編輯器工具架構**：基於 diff 驅動的安全 AI 編輯器，包含給 AI 使用的 function 和系統內部執行的工具
 - **會話管理架構修復**：創建全域 OpenAIIntegrationManager 單例模式，解決每次 API 請求重新創建實例導致會話遺失的問題，實現會話持久化和實例復用
+- **Docker 工具安裝解決方案**：
+  - 修改 Dockerfile 添加 tree、wget、nano、vim、htop 等常用工具
+  - 容器創建 API 自動安裝工具，確保新容器包含所有必要工具
+  - 現有容器可透過手動命令安裝：`docker exec <container-name> sh -c "apk update && apk add --no-cache tree wget nano vim htop"`
+- **用戶體驗優化**：
+  - 簡化工具調用確認機制，減少洗版問題
+  - 添加 5 分鐘超時機制和倒數計時顯示
+  - 移除重複 API 請求，避免循環調用
+- **React Hydration 錯誤修復**：
+  - 使用固定值替代 Math.random() 避免服務端客戶端不一致
+  - 使用 useEffect 設置時間避免 Date 相關 hydration 錯誤
+  - 創建 ID 計數器替代 Date.now() 生成唯一 ID
+  - 修復 project.stats 可能為 undefined 的問題
+- **實時日誌顯示系統**：
+  - 使用 Server-Sent Events (SSE) 實現實時日誌流
+  - 終端風格的實時日誌顯示彈窗
+  - 支持流式回應和傳統回應兩種模式
 
 ## TODO
 
@@ -70,6 +87,13 @@
 - [x] 52. 修復健康檢查 API ESLint 錯誤 - 處理未使用的 request 參數和 error 變數，使用下劃線前綴避免 linting 警告
 - [x] 53. 修復用戶確認 UI 流程 - 實作完整的前端確認界面，解決後台等待確認但前端無 UI 的問題
 - [ ] 54. 實作 Docker 容器自動初始化 Next.js 專案 - 創建新容器後自動執行 npx create-next-app 並設定好參數
+- [x] 55. 修復 Docker 容器缺少常用工具問題 - 在 Dockerfile 中安裝 tree、curl、wget 等常用命令行工具
+- [x] 56. 優化工具調用用戶體驗 - 改善確認機制，減少洗版問題，實作 5 分鐘超時機制
+- [x] 57. 修復 ai-editor-tools.ts 的 TypeScript 錯誤 - 移除未使用的泛型參數
+- [x] 58. 修復 React hydration 錯誤 - 解決服務端和客戶端渲染不一致的問題，修復 Math.random、Date.now 等導致的錯誤
+- [x] 59. 實作 Docker 容器工具自動安裝 - 在容器創建時自動安裝 tree、wget、nano、vim 等常用工具
+- [x] 60. 實作容器創建實時日誌顯示 - 使用 Server-Sent Events 讓用戶能看到完整的安裝過程
+- [x] 61. 修復 ProjectCard 狀態顯示錯誤 - 解決 getStatusDisplay 函數可能返回 undefined 的問題，添加 default 情況和數據驗證
 
 ### 下一階段任務
 

@@ -115,10 +115,13 @@ export function ProjectDashboard() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [statusFilter, setStatusFilter] = useState('all');
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [dockerError, setDockerError] = useState<string | null>(null);
   const [dockerDebugOutput, setDockerDebugOutput] = useState<string | null>(null);
+  const [lastUpdateTime, setLastUpdateTime] = useState<string>('');
+  const [creationLogs, setCreationLogs] = useState<string[]>([]);
+  const [isCreating, setIsCreating] = useState(false);
   
   // 獲取專案列表
   const fetchProjects = async () => {
@@ -138,22 +141,32 @@ export function ProjectDashboard() {
           status: string;
           containerId: string;
           createdAt: string;
-        }) => ({
-          ...project,
-          lastUpdated: new Date(project.lastUpdated),
-          containerStatus: project.status,
-          framework: 'next' as const, // 預設為 Next.js
-          recentTodos: [
-            { id: '1', text: '設定專案環境', completed: true },
-            { id: '2', text: '建立基礎結構', completed: false },
-            { id: '3', text: '實作核心功能', completed: false }
-          ],
-          stats: {
-            totalFiles: Math.floor(Math.random() * 50) + 10,
-            totalTodos: 3,
-            completedTodos: 1
+        }) => {
+          // 確保 containerStatus 是有效值
+          let containerStatus: 'running' | 'stopped' | 'error' = 'stopped';
+          if (project.status === 'running') {
+            containerStatus = 'running';
+          } else if (project.status === 'error') {
+            containerStatus = 'error';
           }
-        }));
+          
+          return {
+            ...project,
+            lastUpdated: new Date(project.lastUpdated),
+            containerStatus,
+            framework: 'next' as const, // 預設為 Next.js
+            recentTodos: [
+              { id: '1', text: '設定專案環境', completed: true },
+              { id: '2', text: '建立基礎結構', completed: false },
+              { id: '3', text: '實作核心功能', completed: false }
+            ],
+            stats: {
+              totalFiles: 15, // 使用固定值避免 hydration 錯誤
+              totalTodos: 3,
+              completedTodos: 1
+            }
+          };
+        });
         
         setProjects(transformedProjects);
         
@@ -183,6 +196,8 @@ export function ProjectDashboard() {
 
   useEffect(() => {
     fetchProjects();
+    // 設置當前時間，避免 hydration 錯誤
+    setLastUpdateTime(new Date().toLocaleString('zh-TW'));
   }, []);
   
   // 過濾專案
@@ -294,11 +309,15 @@ export function ProjectDashboard() {
   const handleCreateProject = async (data: { name: string; description: string }) => {
     try {
       setLoading(true);
+      setIsCreating(true);
+      setCreationLogs([]);
       
+      // 使用 Server-Sent Events 獲取實時日誌
       const response = await fetch('/api/containers', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Accept': 'text/stream',
         },
         body: JSON.stringify({
           action: 'create',
@@ -307,22 +326,70 @@ export function ProjectDashboard() {
         })
       });
       
-      const result = await response.json();
-      if (result.success) {
-        // 添加到本地狀態
-        setProjects(prev => [...prev, result.data]);
-        alert(`專案 "${data.name}" 創建成功！`);
-      } else {
-        const errorMsg = result.dockerError ? 
-          `Docker 錯誤: ${result.details || result.error}` : 
-          `創建失敗: ${result.error}`;
-        alert(errorMsg);
+      if (!response.body) {
+        throw new Error('無法獲取回應流');
       }
+      
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          
+          if (done) break;
+          
+          const chunk = decoder.decode(value);
+          const lines = chunk.split('\n');
+          
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const data = JSON.parse(line.slice(6));
+                
+                if (data.type === 'log') {
+                  setCreationLogs(prev => [...prev, data.message]);
+                } else if (data.type === 'complete') {
+                  // 專案創建完成，確保數據結構正確
+                  const newContainer = {
+                    ...data.container,
+                    lastUpdated: new Date(data.container.lastUpdated || new Date()),
+                    containerStatus: (data.container.status || data.container.containerStatus || 'running') as 'running' | 'stopped' | 'error',
+                    framework: data.container.framework || 'next' as const,
+                    recentTodos: data.container.recentTodos || [
+                      { id: '1', text: '設定專案環境', completed: true },
+                      { id: '2', text: '建立基礎結構', completed: false },
+                      { id: '3', text: '實作核心功能', completed: false }
+                    ],
+                    stats: data.container.stats || {
+                      totalFiles: 15,
+                      totalTodos: 3,
+                      completedTodos: 1
+                    }
+                  };
+                  setProjects(prev => [...prev, newContainer]);
+                  alert(`專案 "${newContainer.name}" 創建成功！`);
+                  setIsCreateModalOpen(false);
+                } else if (data.type === 'error') {
+                  throw new Error(data.error);
+                }
+              } catch (parseError) {
+                console.error('解析 SSE 數據失敗:', parseError);
+              }
+            }
+          }
+        }
+      } finally {
+        reader.releaseLock();
+      }
+      
     } catch (error) {
       console.error('創建專案失敗:', error);
-      alert('創建專案失敗，請檢查網路連接或稍後重試');
+      alert(`創建專案失敗: ${error instanceof Error ? error.message : '未知錯誤'}`);
     } finally {
       setLoading(false);
+      setIsCreating(false);
+      setCreationLogs([]);
     }
   };
   
@@ -499,6 +566,58 @@ export function ProjectDashboard() {
         onSubmit={handleCreateProject}
       />
 
+      {/* 創建日誌顯示 */}
+      {isCreating && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-4xl w-full mx-4 max-h-[80vh] flex flex-col">
+            <div className="p-6 border-b border-gray-200 dark:border-gray-700">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                🚀 正在創建專案容器
+              </h3>
+              <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                請稍候，正在安裝系統工具和初始化 Next.js 專案...
+              </p>
+            </div>
+            
+            <div className="flex-1 p-6 overflow-y-auto">
+              <div className="bg-black rounded-lg p-4 font-mono text-sm text-green-400 max-h-96 overflow-y-auto">
+                {creationLogs.length === 0 ? (
+                  <div className="text-gray-500">等待日誌輸出...</div>
+                ) : (
+                  creationLogs.map((log, index) => (
+                    <div key={index} className="mb-1">
+                      {log}
+                    </div>
+                  ))
+                )}
+                {/* 自動滾動到底部 */}
+                <div ref={(el) => el?.scrollIntoView({ behavior: 'smooth' })} />
+              </div>
+            </div>
+            
+            <div className="p-6 border-t border-gray-200 dark:border-gray-700">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
+                  <span className="text-sm text-gray-600 dark:text-gray-400">
+                    創建進行中... ({creationLogs.length} 條日誌)
+                  </span>
+                </div>
+                <button
+                  onClick={() => {
+                    setIsCreating(false);
+                    setCreationLogs([]);
+                  }}
+                  className="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 transition-colors"
+                >
+                  隱藏日誌
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 底部統計資訊 */}
       <div className="mt-8 p-4 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
         <div className="flex items-center justify-between text-sm text-gray-600 dark:text-gray-400">
@@ -506,7 +625,7 @@ export function ProjectDashboard() {
             顯示 {filteredProjects.length} / {projects.length} 個專案
           </span>
           <span>
-            上次更新: {new Date().toLocaleString('zh-TW')}
+            上次更新: {lastUpdateTime}
           </span>
         </div>
       </div>

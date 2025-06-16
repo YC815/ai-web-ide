@@ -104,6 +104,9 @@ export class AIEditorManager {
         case 'test_file':
           return await this.handleTestFile(parameters as AIToolParameters['test_file']) as AIToolResponse<T>;
         
+        case 'complete_task':
+          return this.handleCompleteTask(parameters as AIToolParameters['complete_task']) as AIToolResponse<T>;
+        
         default:
           return {
             success: false,
@@ -481,6 +484,40 @@ export class AIEditorManager {
       error: result.error,
       message: result.message
     };
+  }
+
+  private async handleCompleteTask(params: AIToolParameters['complete_task']): Promise<AIToolResponse<'complete_task'>> {
+    try {
+      // 記錄任務完成
+      this.logAction('complete_task', {
+        summary: params.summary,
+        status: params.status,
+        details: params.details,
+        timestamp: new Date().toISOString()
+      }, 'success');
+
+      // 返回完成資訊
+      const result = {
+        summary: params.summary,
+        status: params.status,
+        details: params.details || ''
+      };
+
+      return {
+        success: true,
+        data: result,
+        message: `任務已完成 (${params.status}): ${params.summary}`
+      };
+    } catch (error) {
+      this.logAction('complete_task', {
+        error: error instanceof Error ? error.message : 'Unknown error'
+      }, 'error');
+
+      return {
+        success: false,
+        error: `標記任務完成失敗: ${error instanceof Error ? error.message : 'Unknown error'}`
+      };
+    }
   }
 
   // 輔助方法

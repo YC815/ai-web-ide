@@ -13,6 +13,11 @@ RUN apk add --no-cache \
     openssh-client \
     curl \
     bash \
+    tree \
+    wget \
+    nano \
+    vim \
+    htop \
     && rm -rf /var/cache/apk/*
 
 # 複製 package.json 和 package-lock.json

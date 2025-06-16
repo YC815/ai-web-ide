@@ -37,6 +37,46 @@ const execCommand = (command: string, args: string[], timeoutMs: number = 5000):
   });
 };
 
+// 執行命令並返回實時日誌的輔助函數
+const execCommandWithLogs = (command: string, args: string[], onLog?: (log: string) => void, timeoutMs: number = 300000): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { stdio: 'pipe' });
+    let stdout = '';
+    let stderr = '';
+    
+    child.stdout.on('data', (data) => {
+      const log = data.toString();
+      stdout += log;
+      if (onLog) onLog(`[STDOUT] ${log}`);
+    });
+    
+    child.stderr.on('data', (data) => {
+      const log = data.toString();
+      stderr += log;
+      if (onLog) onLog(`[STDERR] ${log}`);
+    });
+    
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve(stdout);
+      } else {
+        reject(new Error(stderr || `Command failed with code ${code}`));
+      }
+    });
+    
+    // 設置可配置的超時
+    const timeout = setTimeout(() => {
+      child.kill();
+      reject(new Error(`Command timeout (${timeoutMs}ms)`));
+    }, timeoutMs);
+    
+    // 清理超時定時器
+    child.on('close', () => {
+      clearTimeout(timeout);
+    });
+  });
+};
+
 // 長時間執行命令的輔助函數（用於 Next.js 初始化）
 const execLongCommand = (command: string, args: string[]): Promise<string> => {
   return execCommand(command, args, 300000); // 5 分鐘超時
@@ -125,17 +165,18 @@ const getAIWebIDEContainers = async () => {
 };
 
 // 創建新的專案容器
-const createProjectContainer = async (projectName: string, description: string) => {
+const createProjectContainer = async (projectName: string, description: string, onLog?: (log: string) => void) => {
   // 生成容器名稱
   const timestamp = Date.now();
   const containerName = `ai-web-ide-${projectName.toLowerCase().replace(/[^a-z0-9]/g, '-')}-${timestamp}`;
   
-  console.log('Creating container with name:', containerName);
+  if (onLog) onLog(`🚀 開始創建容器: ${containerName}`);
   
   // 創建容器工作目錄
   const workspaceDir = `/tmp/ai-web-ide/${containerName}`;
   
   // 創建並啟動容器
+  if (onLog) onLog(`📦 正在創建 Docker 容器...`);
   const containerId = await execCommand('docker', [
     'run', '-d',
     '--name', containerName,
@@ -148,44 +189,84 @@ const createProjectContainer = async (projectName: string, description: string) 
     'sh', '-c', 'while true; do sleep 3600; done' // 保持容器運行
   ]);
   
-  console.log('Container created with ID:', containerId.trim());
+  if (onLog) onLog(`✅ 容器創建成功: ${containerId.trim()}`);
+  
+  // 安裝系統工具
+  try {
+    if (onLog) onLog(`🔧 正在安裝系統工具...`);
+    
+    // 更新 apk 包管理器
+    if (onLog) onLog(`📦 更新包管理器...`);
+    await execCommandWithLogs('docker', [
+      'exec', containerName,
+      'sh', '-c', 
+      'apk update'
+    ], onLog);
+    
+    // 安裝基礎工具
+    if (onLog) onLog(`🛠️ 安裝基礎工具 (curl, bash, git)...`);
+    await execCommandWithLogs('docker', [
+      'exec', containerName,
+      'sh', '-c', 
+      'apk add --no-cache curl bash git'
+    ], onLog);
+    
+    // 安裝常用命令行工具
+    if (onLog) onLog(`📋 安裝常用工具 (tree, wget, nano, vim)...`);
+    await execCommandWithLogs('docker', [
+      'exec', containerName,
+      'sh', '-c', 
+      'apk add --no-cache tree wget nano vim htop'
+    ], onLog);
+    
+    if (onLog) onLog(`✅ 系統工具安裝完成`);
+    
+  } catch (toolError) {
+    if (onLog) onLog(`⚠️ 工具安裝失敗: ${toolError instanceof Error ? toolError.message : 'Unknown error'}`);
+    console.error('工具安裝失敗:', toolError);
+  }
   
   // 自動初始化 Next.js 專案
   try {
-    console.log('開始初始化 Next.js 專案...');
+    if (onLog) onLog(`🚀 開始初始化 Next.js 專案...`);
     
     // 在容器內執行 npx create-next-app
-    const initOutput = await execLongCommand('docker', [
+    await execCommandWithLogs('docker', [
       'exec', containerName,
       'sh', '-c', 
       `cd /app/workspace && npx create-next-app@latest ${projectName} --typescript --tailwind --eslint --app --src-dir --import-alias "@/*" --yes`
-    ]);
+    ], onLog);
     
-    console.log('Next.js 專案初始化完成:', initOutput);
+    if (onLog) onLog(`✅ Next.js 專案初始化完成`);
     
     // 設置工作目錄權限
+    if (onLog) onLog(`🔐 設置專案權限...`);
     await execCommand('docker', [
       'exec', containerName,
       'sh', '-c',
       `cd /app/workspace/${projectName} && chown -R node:node . && chmod -R 755 .`
     ]);
     
-    console.log('專案權限設置完成');
+    if (onLog) onLog(`✅ 專案權限設置完成`);
     
     // 安裝額外的開發依賴
-    await execLongCommand('docker', [
+    if (onLog) onLog(`📦 安裝額外開發依賴...`);
+    await execCommandWithLogs('docker', [
       'exec', containerName,
       'sh', '-c',
       `cd /app/workspace/${projectName} && npm install --save-dev @types/node`
-    ]);
+    ], onLog);
     
-    console.log('額外依賴安裝完成');
+    if (onLog) onLog(`✅ 額外依賴安裝完成`);
     
   } catch (initError) {
+    if (onLog) onLog(`❌ Next.js 專案初始化失敗: ${initError instanceof Error ? initError.message : 'Unknown error'}`);
     console.error('Next.js 專案初始化失敗:', initError);
     // 即使初始化失敗，容器仍然可用，只是沒有 Next.js 專案
-    console.log('容器創建成功，但 Next.js 初始化失敗，用戶可以手動初始化');
+    if (onLog) onLog(`ℹ️ 容器創建成功，但 Next.js 初始化失敗，用戶可以手動初始化`);
   }
+  
+  if (onLog) onLog(`🎉 專案容器創建完成！`);
   
   const newContainer = {
     id: containerName, // 使用容器名稱作為 ID，保持一致性
@@ -298,7 +379,9 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { action, projectName, description, containerId } = body;
-    
+
+    console.log('Container API request:', { action, projectName, description, containerId });
+
     switch (action) {
       case 'create':
         if (!projectName) {
@@ -307,12 +390,59 @@ export async function POST(request: NextRequest) {
             error: '專案名稱不能為空'
           }, { status: 400 });
         }
-        
-        const newContainer = await createProjectContainer(projectName, description || '');
-        return NextResponse.json({
-          success: true,
-          data: newContainer
-        });
+
+        try {
+          // 檢查是否請求實時日誌
+          const wantsLogs = request.headers.get('accept') === 'text/stream';
+          
+          if (wantsLogs) {
+            // 返回 Server-Sent Events 流
+            const encoder = new TextEncoder();
+            const stream = new ReadableStream({
+              start(controller) {
+                const onLog = (log: string) => {
+                  const data = `data: ${JSON.stringify({ type: 'log', message: log })}\n\n`;
+                  controller.enqueue(encoder.encode(data));
+                };
+                
+                createProjectContainer(projectName, description || '', onLog)
+                  .then((newContainer) => {
+                    const data = `data: ${JSON.stringify({ type: 'complete', container: newContainer })}\n\n`;
+                    controller.enqueue(encoder.encode(data));
+                    controller.close();
+                  })
+                  .catch((error) => {
+                    const data = `data: ${JSON.stringify({ type: 'error', error: error.message })}\n\n`;
+                    controller.enqueue(encoder.encode(data));
+                    controller.close();
+                  });
+              }
+            });
+            
+            return new Response(stream, {
+              headers: {
+                'Content-Type': 'text/event-stream',
+                'Cache-Control': 'no-cache',
+                'Connection': 'keep-alive',
+              },
+            });
+          } else {
+            // 傳統的一次性回應
+            const newContainer = await createProjectContainer(projectName, description || '');
+            return NextResponse.json({
+              success: true,
+              data: newContainer
+            });
+          }
+        } catch (error) {
+          console.error('創建容器失敗:', error);
+          return NextResponse.json({
+            success: false,
+            error: error instanceof Error ? error.message : '創建容器失敗',
+            dockerError: true,
+            details: error instanceof Error ? error.message : String(error)
+          }, { status: 500 });
+        }
       
       case 'start':
       case 'stop':

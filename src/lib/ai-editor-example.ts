@@ -85,9 +85,10 @@ export async function codeModificationExample() {
 
   // 2. 提議代碼修改
   const diffProposal = await aiEditor.executeAITool('propose_diff', {
-    path: 'src/components/Button.tsx',
-    original: originalFile.data,
-    instruction: '添加 loading 狀態支持，包含 loading prop 和 spinner 圖標'
+    filePath: 'src/components/Button.tsx',
+    originalContent: originalFile.data || '',
+    modifiedContent: originalFile.data || '', // 這裡應該是修改後的內容
+    description: '添加 loading 狀態支持，包含 loading prop 和 spinner 圖標'
   });
 
   if (diffProposal.success) {

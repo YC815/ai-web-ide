@@ -41,6 +41,8 @@ export function ProjectCard({ project, onAction }: ProjectCardProps) {
         return { icon: '🟡', text: '已停止', color: 'text-yellow-600 dark:text-yellow-400' };
       case 'error':
         return { icon: '🔴', text: '錯誤', color: 'text-red-600 dark:text-red-400' };
+      default:
+        return { icon: '⚪', text: '未知', color: 'text-gray-600 dark:text-gray-400' };
     }
   };
 
@@ -92,7 +94,7 @@ export function ProjectCard({ project, onAction }: ProjectCardProps) {
 
   const statusDisplay = getStatusDisplay(project.containerStatus);
   const frameworkIcon = getFrameworkIcon(project.framework);
-  const progressPercentage = project.stats.totalTodos > 0 
+  const progressPercentage = project.stats?.totalTodos && project.stats.totalTodos > 0 
     ? Math.round((project.stats.completedTodos / project.stats.totalTodos) * 100) 
     : 0;
 
@@ -134,7 +136,7 @@ export function ProjectCard({ project, onAction }: ProjectCardProps) {
         <div className="mt-3">
           <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400 mb-1">
             <span>TODO 進度</span>
-            <span>{project.stats.completedTodos}/{project.stats.totalTodos} ({progressPercentage}%)</span>
+            <span>{project.stats?.completedTodos || 0}/{project.stats?.totalTodos || 0} ({progressPercentage}%)</span>
           </div>
           <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
             <div 
@@ -175,7 +177,7 @@ export function ProjectCard({ project, onAction }: ProjectCardProps) {
         {/* 統計資訊 */}
         <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400 mb-3">
           <div className="flex items-center space-x-3">
-            <span>📁 {project.stats.totalFiles} 檔案</span>
+            <span>📁 {project.stats?.totalFiles || 0} 檔案</span>
             <span>🕒 {formatLastUpdated(project.lastUpdated)}</span>
           </div>
           {project.containerId && (

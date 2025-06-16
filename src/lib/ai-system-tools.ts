@@ -498,17 +498,38 @@ export class SystemTools {
    */
   private isCommandSafe(cmd: string): boolean {
     const safeCommands = [
-      'npm', 'yarn', 'git', 'ls', 'pwd', 'cat', 'head', 'tail', 
-      'grep', 'find', 'tree', 'mkdir', 'touch', 'cp', 'mv'
+      // 包管理器
+      'npm', 'yarn', 'pnpm',
+      // Git 操作
+      'git',
+      // 檔案系統操作
+      'ls', 'pwd', 'cat', 'head', 'tail', 'less', 'more',
+      'grep', 'find', 'tree', 'mkdir', 'touch', 'cp', 'mv',
+      'wc', 'sort', 'uniq', 'cut', 'awk', 'sed',
+      // 網路工具
+      'wget', 'curl', 'ping',
+      // 系統資訊
+      'which', 'whereis', 'ps', 'top', 'df', 'du', 'free',
+      'uname', 'whoami', 'id', 'date', 'uptime',
+      // 文字處理
+      'echo', 'printf', 'basename', 'dirname',
+      // 壓縮解壓
+      'tar', 'gzip', 'gunzip', 'zip', 'unzip',
+      // Node.js 相關
+      'node', 'npx', 'tsc', 'eslint', 'prettier',
+      // 測試工具
+      'jest', 'mocha', 'cypress'
     ];
     
     const dangerousCommands = [
       'rm -rf', 'sudo', 'chmod', 'chown', 'dd', 'mkfs', 'fdisk',
-      'kill', 'killall', 'reboot', 'shutdown', 'halt'
+      'kill', 'killall', 'reboot', 'shutdown', 'halt', 'init',
+      'mount', 'umount', 'format', 'del', 'deltree',
+      'passwd', 'su', 'crontab', 'at', 'batch'
     ];
     
     // 檢查是否包含危險命令
-    if (dangerousCommands.some(dangerous => cmd.includes(dangerous))) {
+    if (dangerousCommands.some(dangerous => cmd.toLowerCase().includes(dangerous))) {
       return false;
     }
     

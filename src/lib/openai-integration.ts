@@ -5,8 +5,7 @@ import OpenAI from 'openai';
 import { createAIEditorManager, AIEditorConfig, AIEditorManager } from './ai-editor-manager';
 import { 
   AIToolName, 
-  AIToolParameters, 
-  getFunctionDefinitionsForOpenAI 
+  AIToolParameters
 } from './ai-function-schemas';
 
 export interface OpenAIIntegrationConfig {
@@ -21,8 +20,8 @@ export interface ToolCallLog {
   id: string;
   timestamp: Date;
   toolName: string;
-  parameters: any;
-  result: any;
+  parameters: Record<string, unknown>;
+  result: Record<string, unknown>;
   executionTime: number;
   success: boolean;
   error?: string;
@@ -36,12 +35,20 @@ export interface ChatSession {
   lastActivity: Date;
 }
 
+// 定義工具函數類型
+type ToolFunction = (args: Record<string, unknown>) => Promise<{
+  success: boolean;
+  data?: unknown;
+  message?: string;
+  error?: string;
+}>;
+
 // 🚀 OpenAI 整合管理器
 export class OpenAIIntegration {
   private openai: OpenAI;
   private aiEditor: AIEditorManager;
   private config: OpenAIIntegrationConfig;
-  private toolRegistry: Record<string, Function> = {};
+  private toolRegistry: Record<string, ToolFunction> = {};
   private sessions: Map<string, ChatSession> = new Map();
 
   constructor(config: OpenAIIntegrationConfig) {
@@ -168,7 +175,7 @@ export class OpenAIIntegration {
 
     const maxToolCalls = options?.maxToolCalls || this.config.maxToolCalls || 10;
     let toolCallsExecuted = 0;
-    let currentMessages = [...session.messages];
+    const currentMessages = [...session.messages];
 
     // 獲取工具定義
     const tools = this.aiEditor.getFunctionDefinitionsForOpenAI();
@@ -176,7 +183,7 @@ export class OpenAIIntegration {
     while (toolCallsExecuted < maxToolCalls) {
       // 發送請求到 OpenAI
       const completion = await this.openai.chat.completions.create({
-        model: this.config.model || 'gpt-4',
+        model: this.config.model || 'gpt-4o',
         messages: currentMessages,
         tools,
         tool_choice: 'auto',
@@ -364,7 +371,7 @@ export class OpenAIIntegration {
   /**
    * 處理用戶確認
    */
-  async handleUserConfirmation(actionId: string, confirmed: boolean, data?: any): Promise<void> {
+  async handleUserConfirmation(actionId: string, confirmed: boolean, data?: Record<string, unknown>): Promise<void> {
     await this.aiEditor.handleUserConfirmation(actionId, confirmed, data);
   }
 
