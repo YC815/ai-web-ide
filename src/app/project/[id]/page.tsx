@@ -1,20 +1,41 @@
+'use client';
+
+import { useState, useEffect } from 'react';
 import { notFound } from 'next/navigation';
+import Link from 'next/link';
+import { ChatInterface } from '../../components/ChatInterface';
 
 interface Props {
-  params: {
+  params: Promise<{
     id: string;
-  };
+  }>;
 }
 
-// 模擬獲取專案資訊的函數
-async function getProject(id: string) {
-  // TODO: 替換為真實的 API 調用
+interface Project {
+  id: string;
+  name: string;
+  description: string;
+  lastUpdated: string;
+  status: 'running' | 'stopped' | 'error';
+  containerId: string;
+  createdAt: string;
+}
+
+// 獲取專案資訊的函數
+async function getProject(id: string): Promise<Project | null> {
   try {
-    const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000'}/api/containers`);
+    const response = await fetch('/api/containers', {
+      cache: 'no-store',
+    });
+    
+    if (!response.ok) {
+      throw new Error('Failed to fetch projects');
+    }
+    
     const result = await response.json();
     
     if (result.success) {
-      const project = result.data.find((p: any) => p.id === id);
+      const project = result.data.find((p: Project) => p.id === id);
       return project || null;
     }
     return null;
@@ -24,8 +45,34 @@ async function getProject(id: string) {
   }
 }
 
-export default async function ProjectPage({ params }: Props) {
-  const project = await getProject(params.id);
+export default function ProjectPage({ params }: Props) {
+  const [project, setProject] = useState<Project | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<'chat' | 'todo'>('chat');
+
+  
+  // 載入專案資訊
+  useEffect(() => {
+    const loadProject = async () => {
+      const resolvedParams = await params;
+      const projectData = await getProject(resolvedParams.id);
+      setProject(projectData);
+      setLoading(false);
+    };
+    
+    loadProject();
+  }, [params]);
+  
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+          <span className="mt-2 text-gray-600 dark:text-gray-400">載入專案中...</span>
+        </div>
+      </div>
+    );
+  }
   
   if (!project) {
     notFound();
@@ -39,13 +86,13 @@ export default async function ProjectPage({ params }: Props) {
           <div className="flex items-center justify-between h-16">
             <div className="flex items-center space-x-4">
               {/* 返回按鈕 */}
-              <a
+              <Link
                 href="/"
                 className="inline-flex items-center px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors"
               >
                 <span className="mr-2">←</span>
                 返回首頁
-              </a>
+              </Link>
               
               {/* 專案資訊 */}
               <div className="flex items-center space-x-3">
@@ -102,73 +149,46 @@ export default async function ProjectPage({ params }: Props) {
         <div className="w-1/2 flex flex-col border-r border-gray-200 dark:border-gray-700">
           {/* Tab 切換 */}
           <div className="flex border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
-            <button className="flex-1 px-4 py-3 text-sm font-medium text-blue-600 bg-blue-50 dark:bg-blue-900/20 dark:text-blue-400 border-b-2 border-blue-600">
+            <button 
+              onClick={() => setActiveTab('chat')}
+              className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${
+                activeTab === 'chat'
+                  ? 'text-blue-600 bg-blue-50 dark:bg-blue-900/20 dark:text-blue-400 border-b-2 border-blue-600'
+                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
+              }`}
+            >
               💬 AI 聊天
             </button>
-            <button className="flex-1 px-4 py-3 text-sm font-medium text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300">
+            <button 
+              onClick={() => setActiveTab('todo')}
+              className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${
+                activeTab === 'todo'
+                  ? 'text-blue-600 bg-blue-50 dark:bg-blue-900/20 dark:text-blue-400 border-b-2 border-blue-600'
+                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
+              }`}
+            >
               ✅ TODO 列表
             </button>
           </div>
           
-          {/* 聊天區域 */}
-          <div className="flex-1 flex flex-col bg-white dark:bg-gray-800">
-            {/* 聊天訊息區域 */}
-            <div className="flex-1 p-4 overflow-y-auto">
-              <div className="space-y-4">
-                {/* 歡迎訊息 */}
-                <div className="flex items-start space-x-3">
-                  <div className="flex-shrink-0">
-                    <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center">
-                      <span className="text-white text-sm">🤖</span>
-                    </div>
-                  </div>
-                  <div className="flex-1">
-                    <div className="bg-gray-100 dark:bg-gray-700 rounded-lg p-3">
-                      <p className="text-sm text-gray-900 dark:text-white">
-                        歡迎來到 <strong>{project.name}</strong> 專案！我是您的 AI 助手，可以幫助您：
-                      </p>
-                      <ul className="mt-2 text-sm text-gray-700 dark:text-gray-300 list-disc list-inside space-y-1">
-                        <li>編寫和修改程式碼</li>
-                        <li>生成 React 組件</li>
-                        <li>管理專案依賴</li>
-                        <li>解決錯誤和問題</li>
-                        <li>優化程式碼結構</li>
-                      </ul>
-                      <p className="mt-2 text-sm text-gray-700 dark:text-gray-300">
-                        請告訴我您想要做什麼？
-                      </p>
-                    </div>
-                    <span className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                      {new Date().toLocaleTimeString('zh-TW')}
-                    </span>
-                  </div>
+          {/* 內容區域 */}
+          {activeTab === 'chat' ? (
+            <ChatInterface projectName={project.name} />
+          ) : (
+            <div className="flex-1 flex flex-col bg-white dark:bg-gray-800">
+              <div className="flex-1 p-4">
+                <div className="text-center py-12">
+                  <div className="text-4xl mb-4">📝</div>
+                  <h4 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
+                    TODO 功能開發中
+                  </h4>
+                  <p className="text-sm text-gray-600 dark:text-gray-400">
+                    專案任務管理功能即將推出
+                  </p>
                 </div>
               </div>
             </div>
-            
-            {/* 輸入區域 */}
-            <div className="border-t border-gray-200 dark:border-gray-700 p-4">
-              <div className="flex items-end space-x-3">
-                <div className="flex-1">
-                  <textarea
-                    placeholder="輸入您的需求或問題..."
-                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white resize-none"
-                    rows={3}
-                  />
-                </div>
-                <button className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 transition-colors">
-                  <span className="mr-2">📤</span>
-                  發送
-                </button>
-              </div>
-              
-              {/* Token 統計 */}
-              <div className="mt-2 flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
-                <span>Token 使用: 0 / 本次對話成本: $0.00</span>
-                <span>最後更新: {new Date().toLocaleString('zh-TW')}</span>
-              </div>
-            </div>
-          </div>
+          )}
         </div>
 
         {/* 右側面板 - 實時預覽 */}

@@ -6,4 +6,5 @@ alwaysApply: true
 1. 所有專案細節可以在@pj_info.md 看到
 2. 如果針對專案細節有不夠明確之處可以透過回饋或聊天的方式訊問
 3. 每次進行操作之前梳理要做的任務並編輯 [plan.md](mdc:doc/plan.md) 中todo的部分
-2. 如果有一些筆記需要紀錄以便之後其他改動時也需要做參考，編輯 [plan.md](mdc:doc/plan.md) 中的note
+4. 不需要新增 "### 下一階段任務" 等區段，只要在todo中累加新的項目就好
+4. 如果有一些筆記需要紀錄以便之後其他改動時也需要做參考，編輯 [plan.md](mdc:doc/plan.md) 中的note

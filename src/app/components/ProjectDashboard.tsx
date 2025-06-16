@@ -2,136 +2,34 @@
 
 import { useState, useEffect } from 'react';
 import { ProjectCard } from './ProjectCard';
-import { ProjectFilters } from './ProjectFilters';
 
 // 專案資料介面定義
 interface Project {
   id: string;
   name: string;
   description: string;
-  lastUpdated: string;
-  status: 'running' | 'stopped' | 'error';
+  lastUpdated: Date;
+  containerStatus: 'running' | 'stopped' | 'error';
   containerId: string;
   createdAt: string;
+  framework: 'next' | 'react' | 'vue' | 'angular' | 'other';
+  recentTodos: {
+    id: string;
+    text: string;
+    completed: boolean;
+  }[];
+  stats: {
+    totalFiles: number;
+    totalTodos: number;
+    completedTodos: number;
+  };
 }
 
-// 容器狀態標籤樣式
-const getStatusBadge = (status: Project['status']) => {
-  const baseClasses = 'inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium';
-  
-  switch (status) {
-    case 'running':
-      return `${baseClasses} bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300`;
-    case 'stopped':
-      return `${baseClasses} bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300`;
-    case 'error':
-      return `${baseClasses} bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300`;
-    default:
-      return `${baseClasses} bg-gray-100 text-gray-800`;
-  }
-};
 
-// 容器操作按鈕
-const ActionButton = ({ 
-  onClick, 
-  variant, 
-  children 
-}: { 
-  onClick: () => void; 
-  variant: 'start' | 'stop' | 'delete' | 'open';
-  children: React.ReactNode;
-}) => {
-  const baseClasses = 'inline-flex items-center px-3 py-1 border text-sm font-medium rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2';
-  
-  const variantClasses = {
-    start: 'border-green-300 text-green-700 bg-green-50 hover:bg-green-100 focus:ring-green-500 dark:border-green-600 dark:text-green-400 dark:bg-green-900/20 dark:hover:bg-green-900/40',
-    stop: 'border-yellow-300 text-yellow-700 bg-yellow-50 hover:bg-yellow-100 focus:ring-yellow-500 dark:border-yellow-600 dark:text-yellow-400 dark:bg-yellow-900/20 dark:hover:bg-yellow-900/40',
-    delete: 'border-red-300 text-red-700 bg-red-50 hover:bg-red-100 focus:ring-red-500 dark:border-red-600 dark:text-red-400 dark:bg-red-900/20 dark:hover:bg-red-900/40',
-    open: 'border-blue-300 text-blue-700 bg-blue-50 hover:bg-blue-100 focus:ring-blue-500 dark:border-blue-600 dark:text-blue-400 dark:bg-blue-900/20 dark:hover:bg-blue-900/40'
-  };
-  
-  return (
-    <button 
-      onClick={onClick} 
-      className={`${baseClasses} ${variantClasses[variant]}`}
-    >
-      {children}
-    </button>
-  );
-};
 
-// 專案卡片組件
-const ProjectCard = ({ project, onAction }: { 
-  project: Project; 
-  onAction: (action: string, projectId: string) => void;
-}) => {
-  return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6 hover:shadow-md transition-shadow">
-      {/* 專案標題與狀態 */}
-      <div className="flex items-start justify-between mb-3">
-        <div className="flex-1">
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-1">
-            {project.name}
-          </h3>
-          <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-2">
-            {project.description}
-          </p>
-        </div>
-        <span className={getStatusBadge(project.status)}>
-          {project.status === 'running' ? '🟢 運行中' : 
-           project.status === 'stopped' ? '⚪ 已停止' : '🔴 錯誤'}
-        </span>
-      </div>
-      
-      {/* 專案資訊 */}
-      <div className="mb-4 space-y-1">
-        <div className="flex justify-between text-sm">
-          <span className="text-gray-500 dark:text-gray-400">最後更新</span>
-          <span className="text-gray-700 dark:text-gray-300">{project.lastUpdated}</span>
-        </div>
-        <div className="flex justify-between text-sm">
-          <span className="text-gray-500 dark:text-gray-400">容器 ID</span>
-          <span className="text-gray-700 dark:text-gray-300 font-mono text-xs">
-            {project.containerId.substring(0, 12)}...
-          </span>
-        </div>
-      </div>
-      
-      {/* 操作按鈕 */}
-      <div className="flex flex-wrap gap-2">
-        <ActionButton 
-          variant="open" 
-          onClick={() => onAction('open', project.id)}
-        >
-          📝 開啟專案
-        </ActionButton>
-        
-        {project.status === 'stopped' ? (
-          <ActionButton 
-            variant="start" 
-            onClick={() => onAction('start', project.id)}
-          >
-            ▶️ 啟動
-          </ActionButton>
-        ) : project.status === 'running' ? (
-          <ActionButton 
-            variant="stop" 
-            onClick={() => onAction('stop', project.id)}
-          >
-            ⏹️ 停止
-          </ActionButton>
-        ) : null}
-        
-        <ActionButton 
-          variant="delete" 
-          onClick={() => onAction('delete', project.id)}
-        >
-          🗑️ 刪除
-        </ActionButton>
-      </div>
-    </div>
-  );
-};
+
+
+// 使用導入的 ProjectCard 組件
 
 // 新建專案模態框
 const CreateProjectModal = ({ 
@@ -219,25 +117,65 @@ export function ProjectDashboard() {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [dockerError, setDockerError] = useState<string | null>(null);
+  const [dockerDebugOutput, setDockerDebugOutput] = useState<string | null>(null);
   
   // 獲取專案列表
   const fetchProjects = async () => {
     try {
       setLoading(true);
+      setDockerError(null);
       const response = await fetch('/api/containers');
       const result = await response.json();
       
       if (result.success) {
-        setProjects(result.data);
+        // 轉換 API 回應格式以符合 ProjectCard 期望的介面
+        const transformedProjects = result.data.map((project: {
+          id: string;
+          name: string;
+          description: string;
+          lastUpdated: string;
+          status: string;
+          containerId: string;
+          createdAt: string;
+        }) => ({
+          ...project,
+          lastUpdated: new Date(project.lastUpdated),
+          containerStatus: project.status,
+          framework: 'next' as const, // 預設為 Next.js
+          recentTodos: [
+            { id: '1', text: '設定專案環境', completed: true },
+            { id: '2', text: '建立基礎結構', completed: false },
+            { id: '3', text: '實作核心功能', completed: false }
+          ],
+          stats: {
+            totalFiles: Math.floor(Math.random() * 50) + 10,
+            totalTodos: 3,
+            completedTodos: 1
+          }
+        }));
+        
+        setProjects(transformedProjects);
+        
+        // 如果沒有專案但有調試輸出，保存調試信息
+        if (transformedProjects.length === 0 && result.debugOutput) {
+          setDockerDebugOutput(result.debugOutput);
+        } else {
+          setDockerDebugOutput(null);
+        }
       } else {
         console.error('獲取專案列表失敗:', result.error);
-        // 如果 API 失敗，顯示空列表而不是模擬數據
         setProjects([]);
+        
+        // 如果是 Docker 錯誤，顯示詳細信息
+        if (result.dockerError) {
+          setDockerError(result.details || result.error);
+        }
       }
     } catch (error) {
       console.error('獲取專案列表出錯:', error);
-      // 網路錯誤時也顯示空列表
       setProjects([]);
+      setDockerError(`網路錯誤: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setLoading(false);
     }
@@ -251,18 +189,18 @@ export function ProjectDashboard() {
   const filteredProjects = projects.filter(project => {
     const matchesSearch = project.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          project.description.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesStatus = statusFilter === 'all' || project.status === statusFilter;
+    const matchesStatus = statusFilter === 'all' || project.containerStatus === statusFilter;
     return matchesSearch && matchesStatus;
   });
   
   // 處理專案操作
-  const handleProjectAction = async (action: string, projectId: string) => {
+  const handleProjectAction = async (action: 'start' | 'stop' | 'delete' | 'enter', projectId: string) => {
     const project = projects.find(p => p.id === projectId);
     if (!project) return;
     
     try {
       switch (action) {
-        case 'open':
+        case 'enter':
           // 導航到專案工作區
           window.location.href = `/project/${projectId}`;
           break;
@@ -285,35 +223,63 @@ export function ProjectDashboard() {
             // 更新本地狀態
             setProjects(prev => prev.map(p => 
               p.id === projectId 
-                ? { ...p, status: action === 'start' ? 'running' : 'stopped' }
+                ? { ...p, containerStatus: action === 'start' ? 'running' : 'stopped' }
                 : p
             ));
             alert(`容器${action === 'start' ? '啟動' : '停止'}成功！`);
           } else {
-            alert(`操作失敗: ${result.error}`);
+            const errorMsg = result.dockerError ? 
+              `Docker 錯誤: ${result.details || result.error}` : 
+              `操作失敗: ${result.error}`;
+            alert(errorMsg);
           }
           break;
           
         case 'delete':
           if (confirm(`確定要刪除專案 "${project.name}" 及其所有容器資源嗎？此操作無法恢復。`)) {
-            const response = await fetch('/api/containers', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                action: 'delete',
-                containerId: project.containerId
-              })
-            });
+            // 顯示刪除進度
+            let progressAlert: NodeJS.Timeout | null = null;
             
-            const result = await response.json();
-            if (result.success) {
-              // 從本地狀態中移除
-              setProjects(prev => prev.filter(p => p.id !== projectId));
-              alert('專案刪除成功！');
-            } else {
-              alert(`刪除失敗: ${result.error}`);
+            try {
+              // 顯示刪除進度提示
+              progressAlert = setTimeout(() => {
+                alert('正在刪除專案，請稍候...\n如果容器正在運行，系統會自動重試多次以確保刪除成功。');
+              }, 500);
+              
+              const response = await fetch('/api/containers', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  action: 'delete',
+                  containerId: project.containerId
+                })
+              });
+              
+              // 清除進度提示
+              if (progressAlert) {
+                clearTimeout(progressAlert);
+                progressAlert = null;
+              }
+              
+              const result = await response.json();
+              if (result.success) {
+                // 從本地狀態中移除
+                setProjects(prev => prev.filter(p => p.id !== projectId));
+                alert('專案刪除成功！');
+              } else {
+                const errorMsg = result.dockerError ? 
+                  `Docker 錯誤: ${result.details || result.error}` : 
+                  `刪除失敗: ${result.error}`;
+                alert(errorMsg);
+              }
+            } catch (error) {
+              // 清除進度提示
+              if (progressAlert) {
+                clearTimeout(progressAlert);
+              }
+              throw error; // 重新拋出錯誤讓外層處理
             }
           }
           break;
@@ -347,7 +313,10 @@ export function ProjectDashboard() {
         setProjects(prev => [...prev, result.data]);
         alert(`專案 "${data.name}" 創建成功！`);
       } else {
-        alert(`創建失敗: ${result.error}`);
+        const errorMsg = result.dockerError ? 
+          `Docker 錯誤: ${result.details || result.error}` : 
+          `創建失敗: ${result.error}`;
+        alert(errorMsg);
       }
     } catch (error) {
       console.error('創建專案失敗:', error);
@@ -368,6 +337,39 @@ export function ProjectDashboard() {
   
   return (
     <div className="space-y-6">
+      {/* Docker 錯誤提示 */}
+      {dockerError && (
+        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
+          <div className="flex items-start space-x-3">
+            <div className="flex-shrink-0">
+              <span className="text-red-500 text-xl">⚠️</span>
+            </div>
+            <div className="flex-1">
+              <h3 className="text-sm font-medium text-red-800 dark:text-red-300 mb-1">
+                Docker 環境錯誤
+              </h3>
+              <p className="text-sm text-red-700 dark:text-red-400 mb-2">
+                無法連接到 Docker 服務，請確保 Docker 已正確安裝並運行。
+              </p>
+              <details className="text-xs">
+                <summary className="cursor-pointer text-red-600 dark:text-red-400 hover:text-red-500">
+                  查看詳細錯誤信息
+                </summary>
+                <pre className="mt-2 p-2 bg-red-100 dark:bg-red-900/40 rounded text-red-800 dark:text-red-300 whitespace-pre-wrap">
+                  {dockerError}
+                </pre>
+              </details>
+            </div>
+            <button 
+              onClick={() => setDockerError(null)}
+              className="flex-shrink-0 text-red-500 hover:text-red-700 dark:hover:text-red-300"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* 頁面標題和統計 */}
       <div className="flex items-center justify-between">
         <div>
@@ -381,19 +383,19 @@ export function ProjectDashboard() {
         <div className="flex items-center space-x-6">
           <div className="text-center">
             <div className="text-2xl font-bold text-green-600 dark:text-green-400">
-              {projects.filter(p => p.status === 'running').length}
+              {projects.filter(p => p.containerStatus === 'running').length}
             </div>
             <div className="text-sm text-gray-500 dark:text-gray-400">運行中</div>
           </div>
           <div className="text-center">
             <div className="text-2xl font-bold text-yellow-600 dark:text-yellow-400">
-              {projects.filter(p => p.status === 'stopped').length}
+              {projects.filter(p => p.containerStatus === 'stopped').length}
             </div>
             <div className="text-sm text-gray-500 dark:text-gray-400">已停止</div>
           </div>
           <div className="text-center">
             <div className="text-2xl font-bold text-red-600 dark:text-red-400">
-              {projects.filter(p => p.status === 'error').length}
+              {projects.filter(p => p.containerStatus === 'error').length}
             </div>
             <div className="text-sm text-gray-500 dark:text-gray-400">錯誤</div>
           </div>
@@ -452,10 +454,26 @@ export function ProjectDashboard() {
               ? '嘗試調整搜尋條件或過濾器' 
               : '點擊「新建專案」按鈕開始你的第一個專案'}
           </p>
+          
+          {/* Docker 調試輸出 */}
+          {dockerDebugOutput && !searchTerm && statusFilter === 'all' && (
+            <div className="mt-6 p-4 bg-gray-100 dark:bg-gray-800 rounded-lg text-left max-w-4xl mx-auto">
+              <h4 className="text-sm font-medium text-gray-900 dark:text-white mb-2">
+                🔍 Docker 容器調試信息
+              </h4>
+              <p className="text-xs text-gray-600 dark:text-gray-400 mb-2">
+                以下是當前系統中所有 Docker 容器的列表（包含 ai-web-ide 前綴的會被識別為專案）：
+              </p>
+              <pre className="text-xs text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-900 p-3 rounded border overflow-x-auto">
+                {dockerDebugOutput}
+              </pre>
+            </div>
+          )}
+          
           {!searchTerm && statusFilter === 'all' && (
             <button
               onClick={() => setIsCreateModalOpen(true)}
-              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 transition-colors"
+              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 transition-colors mt-4"
             >
               <span className="mr-2">➕</span>
               新建專案
@@ -468,7 +486,7 @@ export function ProjectDashboard() {
             <ProjectCard
               key={project.id}
               project={project}
-              onAction={handleProjectAction}
+              onAction={(action) => handleProjectAction(action, project.id)}
             />
           ))}
         </div>

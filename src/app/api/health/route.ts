@@ -12,7 +12,8 @@ import { NextRequest, NextResponse } from 'next/server';
  * - 🔧 工具連接狀態驗證
  * - ⏱️ 響應時間測量
  */
-export async function GET(request: NextRequest) {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export async function GET(_request: NextRequest) {
   const startTime = Date.now();
   
   try {
@@ -115,7 +116,8 @@ async function checkServicesStatus(): Promise<ServiceStatus[]> {
       status: 'healthy',
       message: '文件系統正常'
     });
-  } catch (error) {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  } catch (_error) {
     services.push({
       name: 'filesystem', 
       status: 'unhealthy',
@@ -149,7 +151,8 @@ async function checkServicesStatus(): Promise<ServiceStatus[]> {
       status: 'healthy',
       message: 'Next.js 運行正常'
     });
-  } catch (error) {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  } catch (_error) {
     services.push({
       name: 'nextjs',
       status: 'unhealthy', 
@@ -165,7 +168,8 @@ async function checkServicesStatus(): Promise<ServiceStatus[]> {
       status: 'healthy',
       message: '工具管理器準備就緒'
     });
-  } catch (error) {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  } catch (_error) {
     services.push({
       name: 'tool-manager',
       status: 'degraded',
@@ -188,7 +192,8 @@ interface ServiceStatus {
 }
 
 // 支援 HEAD 請求進行快速健康檢查
-export async function HEAD(request: NextRequest) {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export async function HEAD(_request: NextRequest) {
   try {
     const services = await checkServicesStatus();
     const isHealthy = services.every(service => service.status === 'healthy');
@@ -201,7 +206,8 @@ export async function HEAD(request: NextRequest) {
         'Cache-Control': 'no-cache'
       }
     });
-  } catch (error) {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  } catch (_error) {
     return new NextResponse(null, { 
       status: 503,
       headers: {
