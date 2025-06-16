@@ -318,16 +318,6 @@ export function ChatInterface({ projectName }: { projectName: string }) {
       return;
     }
 
-    // 檢查是否要啟動自動修正模式
-    if (currentMessage.includes('自動修正') || currentMessage.includes('autofix')) {
-      const confirmAutoFix = confirm('是否啟動自動修正模式？AI 將會自動檢查和修正問題，直到完成或手動停止。');
-      if (confirmAutoFix) {
-        await startAutoFix(currentMessage);
-        setCurrentMessage('');
-        return;
-      }
-    }
-
     const userMessage = currentMessage;
     setCurrentMessage('');
     setIsLoading(true);
@@ -347,8 +337,10 @@ export function ChatInterface({ projectName }: { projectName: string }) {
     ));
 
     try {
-      // 使用 Function Calling API
-      const response = await fetch('/api/chat-with-tools', {
+      // 根據 autoFixMode 決定使用哪個 API
+      const apiEndpoint = useFunctionCalling ? '/api/chat-with-tools' : '/api/chat';
+      
+      const response = await fetch(apiEndpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -359,6 +351,7 @@ export function ChatInterface({ projectName }: { projectName: string }) {
           projectName,
           conversationId: activeWindowId,
           apiToken,
+          autoRepairMode: autoFixMode, // 直接傳遞自動修正模式狀態
         }),
       });
 
@@ -378,7 +371,7 @@ export function ChatInterface({ projectName }: { projectName: string }) {
         const aiMessage: ChatMessage = {
           id: generateId('msg-ai'),
           role: 'assistant',
-          content: result.data.response,
+          content: result.data.response || result.data.message,
           timestamp: new Date(),
           tokens: result.data.tokens,
           cost: result.data.cost,
@@ -396,6 +389,19 @@ export function ChatInterface({ projectName }: { projectName: string }) {
               }
             : window
         ));
+
+        // 如果是自動修正模式，顯示修正狀態
+        if (autoFixMode && result.data.autoRepairResult) {
+          const repairResult = result.data.autoRepairResult;
+          console.log('🔧 自動修正結果:', repairResult);
+          
+          // 如果還在進行中，設置自動修正狀態
+          if (repairResult.completionStatus === 'in_progress') {
+            setAutoFixRunning(true);
+          } else {
+            setAutoFixRunning(false);
+          }
+        }
 
         setLastUpdateTime(new Date().toLocaleTimeString('zh-TW'));
       } else {
@@ -525,180 +531,11 @@ export function ChatInterface({ projectName }: { projectName: string }) {
     }
   };
   
-  // 自動修正功能
-  const startAutoFix = async (initialMessage: string) => {
-    if (!apiToken) {
-      alert('請先設定 API Token');
-      return;
-    }
-
-    setAutoFixMode(true);
-    setAutoFixRunning(true);
-    setAutoFixIteration(0);
-    setAutoFixLogs([]);
-    setCurrentThinking('開始自動修正流程...');
-
-    let iteration = 0;
-    let lastResponse = initialMessage;
-    
-    while (iteration < maxAutoFixIterations && autoFixRunning) {
-      try {
-        iteration++;
-        setAutoFixIteration(iteration);
-        setCurrentThinking(`第 ${iteration} 次迭代：分析問題並執行修正...`);
-        
-        // 添加迭代日誌
-        const iterationLog = `=== 第 ${iteration} 次自動修正迭代 ===`;
-        setAutoFixLogs(prev => [...prev, iterationLog]);
-
-        // 發送訊息到 AI
-        const response = await sendAutoFixMessage(lastResponse, iteration);
-        
-        if (!response) break;
-
-        // 檢查是否完成
-        if (response.includes('AUTOFIX_COMPLETE') || 
-            response.includes('修正完成') ||
-            response.includes('complete_task') ||
-            response.includes('任務已完成')) {
-          setCurrentThinking('AI 表示修正完成！');
-          setAutoFixLogs(prev => [...prev, '✅ AI 確認修正完成']);
-          break;
-        }
-
-        // 執行命令並獲取日誌
-        const logs = await executeCommandsAndGetLogs();
-        
-        // 將日誌添加到下一次迭代的輸入
-        lastResponse = `上次執行結果：\n${logs}\n\n請檢查是否有錯誤需要修正。如果一切正常，請回覆 "AUTOFIX_COMPLETE"。如果有問題，請繼續修正。`;
-        
-        setAutoFixLogs(prev => [...prev, `執行結果：${logs.substring(0, 200)}...`]);
-        
-        // 短暫延遲避免過於頻繁的請求
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        
-      } catch (error) {
-        console.error('自動修正錯誤:', error);
-        setAutoFixLogs(prev => [...prev, `❌ 錯誤：${error}`]);
-        break;
-      }
-    }
-
-    setAutoFixRunning(false);
-    setCurrentThinking(iteration >= maxAutoFixIterations ? '達到最大迭代次數' : '自動修正流程結束');
-  };
-
-  // 停止自動修正
   const stopAutoFix = () => {
     setAutoFixRunning(false);
-    setCurrentThinking('用戶手動停止自動修正');
-    setAutoFixLogs(prev => [...prev, '🛑 用戶手動停止']);
-  };
-
-  // 發送自動修正訊息
-  const sendAutoFixMessage = async (message: string, iteration: number): Promise<string | null> => {
-    const enhancedMessage = `
-【自動修正模式 - 第 ${iteration} 次迭代】
-
-${message}
-
-你現在處於自動修正模式，具有以下能力：
-- 可以執行 npm, yarn, git, tree, wget, curl, ls, cat, grep, find 等基礎指令
-- 可以讀取和修改檔案
-- 可以檢查錯誤日誌並自動修正
-- 每次修正後會收到執行結果，請根據結果判斷是否需要繼續修正
-
-重要指示：
-1. 如果修正完成且沒有錯誤，請使用 complete_task 工具標記任務完成
-2. complete_task 工具參數：
-   - summary: 完成工作的摘要
-   - status: "success" | "partial" | "failed"
-   - details: 詳細說明
-3. 或者在回覆中包含 "AUTOFIX_COMPLETE" 來結束循環
-4. 如果需要繼續修正，請說明下一步要做什麼
-
-請主動使用工具來檢查和修正問題，不要只是描述要做什麼。
-`;
-
-    try {
-      const response = await fetch('/api/chat-with-tools', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          message: enhancedMessage,
-          projectId: projectId,
-          projectName,
-          conversationId: activeWindowId,
-          apiToken,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const result = await response.json();
-      
-      if (result.success) {
-        // 添加 AI 回應到聊天視窗
-        const aiMessage: ChatMessage = {
-          id: generateId('msg-ai'),
-          role: 'assistant',
-          content: result.data.response,
-          timestamp: new Date(),
-          tokens: result.data.tokens,
-          cost: result.data.cost,
-          toolCallsExecuted: result.data.toolCallsExecuted,
-          stats: result.data.stats
-        };
-
-        setChatWindows(prev => prev.map(window => 
-          window.id === activeWindowId 
-            ? { 
-                ...window, 
-                messages: [...window.messages, aiMessage],
-                totalTokens: window.totalTokens + (result.data.tokens || 0),
-                totalCost: window.totalCost + (result.data.cost || 0)
-              }
-            : window
-        ));
-
-        return result.data.response;
-      }
-      
-      return null;
-    } catch (error) {
-      console.error('自動修正訊息發送失敗:', error);
-      return null;
-    }
-  };
-
-  // 執行命令並獲取日誌
-  const executeCommandsAndGetLogs = async (): Promise<string> => {
-    try {
-      // 這裡可以執行一些檢查命令來獲取系統狀態
-      const commands = [
-        'npm run build 2>&1 || echo "Build failed"',
-        'npm test 2>&1 || echo "Tests failed"',
-        'npm run lint 2>&1 || echo "Lint failed"'
-      ];
-
-      let logs = '';
-      for (const cmd of commands) {
-        try {
-          // 這裡應該調用實際的命令執行 API
-          logs += `$ ${cmd}\n執行中...\n\n`;
-        } catch (error) {
-          logs += `$ ${cmd}\n錯誤: ${error}\n\n`;
-        }
-      }
-
-      return logs || '沒有獲取到執行日誌';
-    } catch (error) {
-      return `獲取日誌失敗: ${error}`;
-    }
+    setAutoFixIteration(0);
+    setCurrentThinking('');
+    console.log('🛑 自動修正已停止');
   };
   
   return (
@@ -937,14 +774,14 @@ ${message}
               value={currentMessage}
               onChange={(e) => setCurrentMessage(e.target.value)}
               onKeyPress={handleKeyPress}
-              placeholder={autoFixMode ? "輸入問題描述，AI 將自動修正直到完成..." : "輸入您的需求或問題..."}
+              placeholder={autoFixMode ? "輸入需求，AI將自動實作並修正錯誤..." : "輸入您的需求或問題..."}
               className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white resize-none"
               rows={3}
               disabled={isLoading || autoFixRunning}
             />
             {autoFixMode && (
               <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                💡 提示：輸入包含「自動修正」或「autofix」的訊息將啟動自動修正模式
+                💡 自動修正模式已啟用：AI會自動實作功能並修正所有錯誤，直到完成
               </div>
             )}
           </div>
@@ -955,23 +792,8 @@ ${message}
               className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
             >
               <span className="mr-2">📤</span>
-              {autoFixRunning ? '修正中...' : '發送'}
+              {autoFixRunning ? '自動修正中...' : (autoFixMode ? '開始自動實作' : '發送')}
             </button>
-            
-            {/* 自動修正快捷按鈕 */}
-            {autoFixMode && !autoFixRunning && (
-              <button
-                onClick={() => {
-                  setCurrentMessage('請自動修正專案中的所有問題');
-                  setTimeout(() => sendMessage(), 100);
-                }}
-                disabled={isLoading}
-                className="inline-flex items-center px-4 py-2 border border-green-600 text-sm font-medium rounded-md text-green-600 bg-white hover:bg-green-50 disabled:bg-gray-100 disabled:cursor-not-allowed transition-colors dark:bg-gray-800 dark:text-green-400 dark:border-green-400 dark:hover:bg-green-900/20"
-              >
-                <span className="mr-2">🔄</span>
-                自動修正
-              </button>
-            )}
           </div>
         </div>
         

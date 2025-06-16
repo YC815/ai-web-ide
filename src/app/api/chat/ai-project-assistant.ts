@@ -121,11 +121,11 @@ export class AIProjectAssistant {
   private async processWithAutoRepair(userMessage: string): Promise<AIAssistantResponse> {
     console.log(`🔧 自動修正模式處理訊息: ${userMessage}`);
     
-    let allActionsTaken: string[] = [];
-    let allDetectedIssues: string[] = [];
-    let allAppliedFixes: string[] = [];
-    let finalResponse: AIAssistantResponse;
-    let thoughtProcess: ThoughtProcess;
+    const allActionsTaken: string[] = [];
+    const allDetectedIssues: string[] = [];
+    const allAppliedFixes: string[] = [];
+    let finalResponse: AIAssistantResponse | undefined;
+    let thoughtProcess: ThoughtProcess | undefined;
 
     // 自動修正循環
     while (this.currentRepairAttempt < this.maxRepairAttempts) {
@@ -209,15 +209,15 @@ export class AIProjectAssistant {
       }
     }
 
-    // 如果達到最大嘗試次數
-    if (this.currentRepairAttempt >= this.maxRepairAttempts) {
+    // 如果達到最大嘗試次數而沒有成功，或者沒有 finalResponse
+    if (!finalResponse) {
       finalResponse = {
         message: `⚠️ 自動修正失敗 - 經過 ${this.maxRepairAttempts} 次嘗試仍無法解決問題，需要人為介入。`,
         error: '自動修正達到最大嘗試次數',
         needsUserInput: true,
         actionsTaken: allActionsTaken,
         autoRepairResult: this.buildAutoRepairResult(
-          thoughtProcess!,
+          thoughtProcess || await this.generateTransparentThoughtProcess(userMessage, this.currentRepairAttempt),
           'failed',
           allDetectedIssues,
           allAppliedFixes,
@@ -234,7 +234,7 @@ export class AIProjectAssistant {
       autoRepairInfo: {
         isAutoRepairMode: true,
         repairAttempt: this.currentRepairAttempt,
-        thoughtProcess: thoughtProcess!,
+        thoughtProcess: thoughtProcess || await this.generateTransparentThoughtProcess(userMessage, this.currentRepairAttempt),
         detectedIssues: allDetectedIssues,
         riskLevel: finalResponse.autoRepairResult?.riskAssessment.level || 'low'
       }
