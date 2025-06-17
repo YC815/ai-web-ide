@@ -4,7 +4,7 @@
 
 ## 🎯 功能特色
 
-- ✅ **給 AI 使用的標準化工具** - 符合 GPT-4 function calling 格式
+- ✅ **給 AI 使用的標準化工具** - 符合 gpt-4o function calling 格式
 - 🔧 **系統內部執行工具** - 安全的檔案操作和命令執行
 - 🛡️ **安全限制機制** - 路徑檢查、命令白名單、用戶確認
 - 📊 **操作日誌系統** - 完整記錄所有 AI 操作
@@ -16,7 +16,7 @@
 src/lib/
 ├── ai-editor-tools.ts      # 給 AI 使用的前端工具
 ├── ai-system-tools.ts      # 系統內部執行工具
-├── ai-function-schemas.ts  # GPT-4 function calling schema
+├── ai-function-schemas.ts  # gpt-4o function calling schema
 ├── ai-editor-manager.ts    # 統一管理器
 ├── diff-processor.ts       # 專業 diff 處理工具
 └── ai-editor-example.ts    # 使用範例
@@ -61,7 +61,7 @@ const functionDefinitions = aiEditor.getFunctionDefinitionsForOpenAI();
 
 // 在 OpenAI API 請求中使用
 const openAIRequest = {
-  model: "gpt-4",
+  model: "gpt-4o",
   messages: [
     {
       role: "system",

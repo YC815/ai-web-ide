@@ -1,5 +1,5 @@
 // OpenAI Function Calling 整合模組
-// 實現完整的 AI 編輯器與 OpenAI GPT-4 function calling 整合
+// 實現完整的 AI 編輯器與 OpenAI gpt-4o function calling 整合
 
 import OpenAI from 'openai';
 import { 

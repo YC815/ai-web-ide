@@ -2,7 +2,7 @@
 
 ## 📋 概述
 
-這是一個完整的 **Node.js + GPT-4 function calling** 整合方案，讓 AI 能夠：
+這是一個完整的 **Node.js + gpt-4o function calling** 整合方案，讓 AI 能夠：
 
 1. **自動調用工具** - AI 根據需求主動選擇和執行工具
 2. **安全執行操作** - 內建路徑檢查、命令白名單、用戶確認機制
@@ -34,7 +34,7 @@ import { createOpenAIIntegration } from "./src/lib/openai-integration";
 // 創建配置
 const config = {
   openaiApiKey: process.env.OPENAI_API_KEY!,
-  model: "gpt-4",
+  model: "gpt-4o",
   aiEditorConfig: {
     projectPath: "/path/to/your/project",
     projectContext: {
@@ -313,7 +313,7 @@ npm run example:openai-integration
 
 這個整合方案提供了：
 
-✅ **完整的 GPT-4 function calling 支援**  
+✅ **完整的 gpt-4o function calling 支援**  
 ✅ **安全的代碼編輯環境**  
 ✅ **智能工具選擇和執行**  
 ✅ **詳細的操作日誌和統計**  

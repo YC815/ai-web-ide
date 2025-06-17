@@ -41,13 +41,13 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatAgent
       projectName, // 不提供預設值，強制要求用戶提供
       conversationId,
       apiToken,
-      maxToolCalls = 5,
+      maxToolCalls = 30,
       maxRetries = 2,
       timeoutMs = 30000,
       enableLogging = true,
       enableAutoRepair = false,
       temperature = 0.1,
-      model = 'gpt-4',
+      model = 'gpt-4o',
       containerId
     } = body;
 
@@ -383,7 +383,7 @@ const advancedConfig = {
   
   // AI 模型配置
   temperature: 0.1,        // 創造性（0-1）
-  model: 'gpt-4',         // 使用的模型
+  model: 'gpt-4o',         // 使用的模型
   
   // 實驗性功能
   enableAutoRepair: true,  // 啟用自動修復模式

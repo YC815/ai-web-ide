@@ -75,7 +75,7 @@
 - [x] 39. 實作用戶確認機制 - AI 操作前的用戶確認界面
 - [x] 40. 實作 AI 操作日誌系統 - 記錄所有 AI 編輯和執行操作
 - [ ] 41. 整合 AST 分析工具 - 使用 Babel/ts-morph/tree-sitter 提供代碼結構分析
-- [x] 42. 實作 OpenAI Function Calling 整合 - 完整的 Node.js + GPT-4 function calling 流程
+- [x] 42. 實作 OpenAI Function Calling 整合 - 完整的 Node.js + gpt-4o function calling 流程
 - [x] 43. 創建 OpenAI 整合管理器 - 會話管理、工具調用統計、安全機制
 - [x] 44. 實作工具調用可視化 - 詳細的工具執行日誌和統計分析
 - [x] 45. 創建完整使用範例 - 基本使用、代碼修改、會話管理、安全確認等範例

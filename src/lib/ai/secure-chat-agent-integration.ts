@@ -105,7 +105,7 @@ export class SecureChatAgentIntegrator {
       enableLogging: config.enableLogging ?? true,
       enableAutoRepair: config.enableAutoRepair ?? false,
       temperature: config.temperature ?? 0.1,
-      model: config.model ?? 'gpt-4',
+      model: config.model ?? 'gpt-4o',
       ...config,
     };
 

@@ -22,9 +22,9 @@ export async function basicUsageExample() {
   // 記錄AI決策過程
   await aiOutputLogger.logDecision(
     'Example',
-    '決定使用 GPT-4 模型來處理使用者請求',
+    '決定使用 gpt-4o 模型來處理使用者請求',
     { 
-      model: 'gpt-4',
+      model: 'gpt-4o',
       reason: '使用者請求需要複雜的推理能力',
       alternatives: ['gpt-3.5-turbo', 'claude-3']
     }

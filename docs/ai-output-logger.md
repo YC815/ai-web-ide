@@ -26,9 +26,9 @@ await aiOutputLogger.logOutput("MyAIModule", "生成的回應內容", {
 });
 
 // 記錄決策過程
-await aiOutputLogger.logDecision("MyAIModule", "決定使用 GPT-4 模型", {
+await aiOutputLogger.logDecision("MyAIModule", "決定使用 gpt-4o 模型", {
   reason: "需要更高的推理能力",
-  model: "gpt-4",
+  model: "gpt-4o",
 });
 
 // 記錄錯誤
@@ -65,7 +65,7 @@ await customLogger.initialize();
 
 ```
 [2024-01-15 14:30:25.123] [OUTPUT] [MyAIModule] 生成的回應內容 | 元數據: {"tokens":150,"responseTime":"1.2s"}
-[2024-01-15 14:30:26.456] [DECISION] [MyAIModule] 決定使用 GPT-4 模型 | 元數據: {"reason":"需要更高的推理能力","model":"gpt-4"}
+[2024-01-15 14:30:26.456] [DECISION] [MyAIModule] 決定使用 gpt-4o 模型 | 元數據: {"reason":"需要更高的推理能力","model":"gpt-4o"}
 [2024-01-15 14:30:27.789] [ERROR] [MyAIModule] API 呼叫失敗 | 元數據: {"errorCode":"TIMEOUT","retryCount":2}
 [2024-01-15 14:30:28.012] [SYSTEM] [MyAIModule] 模組初始化完成 | 元數據: {"version":"1.0.0"}
 ```
@@ -84,7 +84,7 @@ await aiOutputLogger.logOutput(
     inputTokens: 50,
     outputTokens: 25,
     totalTokens: 75,
-    model: "gpt-4",
+    model: "gpt-4o",
     temperature: 0.7,
   }
 );

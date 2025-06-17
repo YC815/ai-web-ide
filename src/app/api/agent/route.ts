@@ -20,7 +20,7 @@ export async function POST(request: NextRequest) {
     // 建立 Agent 並執行
     const factory = AgentFactory.getInstance();
     const result = await factory.quickRun(message, {
-      maxToolCalls: config.maxToolCalls || 5,
+      maxToolCalls: config.maxToolCalls || 30,
       maxRetries: config.maxRetries || 2,
       timeoutMs: config.timeoutMs || 30000,
       enableLogging: config.enableLogging ?? true,

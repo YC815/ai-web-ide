@@ -34,7 +34,7 @@ export interface ChatCompletionResponse {
 
 export class OpenAIService {
   private openai: OpenAI;
-  private defaultModel: string = 'gpt-4';
+  private defaultModel: string = 'gpt-4o';
 
   constructor(apiKey?: string) {
     // 從環境變數或參數獲取 API Key

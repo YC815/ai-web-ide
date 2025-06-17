@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAIProjectAssistant } from './ai-project-assistant';
+import { createLangchainChatEngine, LangchainChatResponse } from '../../../lib/ai/langchain-chat-engine';
 
 export interface ChatRequest {
   message: string;
@@ -8,6 +9,7 @@ export interface ChatRequest {
   conversationId?: string;
   useFullPrompt?: boolean; // 是否使用完整提示詞（預設為 true）
   autoRepairMode?: boolean; // 是否啟用自動修正模式
+  useLangchain?: boolean; // 是否使用新的 Langchain 引擎（預設為 true）
   apiToken?: string; // OpenAI API Token
 }
 
@@ -56,6 +58,9 @@ export interface ChatResponse {
 // 儲存對話實例的 Map（實際應用中應使用 Redis 或資料庫）
 const conversationInstances = new Map<string, ReturnType<typeof createAIProjectAssistant>>();
 
+// Langchain 引擎實例管理
+const langchainEngines = new Map<string, ReturnType<typeof createLangchainChatEngine>>();
+
 // 自動修正會話狀態管理
 interface AutoRepairState {
   isEnabled: boolean;
@@ -85,6 +90,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatRespo
       conversationId, 
       useFullPrompt = true, 
       autoRepairMode = false,
+      useLangchain = true,  // 預設使用 Langchain 引擎
       apiToken 
     } = body;
 
@@ -107,46 +113,86 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatRespo
     // 生成或使用現有的對話 ID
     const currentConversationId = conversationId || `conv_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-    // 獲取或創建 AI 助理實例
-    let assistant = conversationInstances.get(currentConversationId);
-    if (!assistant) {
-      assistant = createAIProjectAssistant({
-        projectId,
-        projectName: projectName || 'Unknown Project',
-        containerStatus: 'running'
-      });
-      conversationInstances.set(currentConversationId, assistant);
-    }
-
-    console.log(`🤖 處理對話 ${currentConversationId} 的訊息:`, message, `(自動修正: ${autoRepairMode})`);
+    console.log(`🤖 處理對話 ${currentConversationId} 的訊息:`, message, `(Langchain: ${useLangchain}, 自動修正: ${autoRepairMode})`);
 
     let responseData;
 
-    if (autoRepairMode) {
-      // 啟用自動修正模式
-      assistant.setAutoRepairMode(true, 3);
+    if (useLangchain) {
+      // 使用新的 Langchain 引擎
+      const engineKey = `${projectId}_${apiToken.substring(0, 10)}`;
+      let chatEngine = langchainEngines.get(engineKey);
       
-      // 直接處理用戶訊息，自動修正會在內部處理
-      const response = await assistant.processUserMessage(message);
-      
-      responseData = {
-        message: response.message,
-        conversationId: currentConversationId,
-        projectReport: response.projectReport,
-        suggestions: response.suggestions,
-        actionsTaken: response.actionsTaken,
-        needsUserInput: response.needsUserInput,
-        autoRepairMode: true,
-        autoRepairResult: response.autoRepairResult
+      if (!chatEngine) {
+        console.log(`🚀 創建新的 Langchain 聊天引擎: ${engineKey}`);
+        chatEngine = createLangchainChatEngine(apiToken, {
+          model: 'gpt-4o',
+          temperature: 0.1,
+          maxTokens: 100000
+        });
+        langchainEngines.set(engineKey, chatEngine);
+      }
+
+      // 建構專案上下文
+      const projectContext = {
+        projectId,
+        projectName: projectName || 'Unknown Project',
+        containerStatus: 'running' as const
       };
-    } else {
-      // 一般模式處理
-      responseData = await handleNormalMode(
-        assistant,
+
+      // 使用 Langchain 引擎處理訊息
+      const langchainResponse: LangchainChatResponse = await chatEngine.processMessage(
         currentConversationId,
         message,
-        useFullPrompt
+        projectContext
       );
+
+      responseData = {
+        message: langchainResponse.message,
+        conversationId: currentConversationId,
+        projectReport: langchainResponse.toolCalls ? `工具調用: ${langchainResponse.toolCalls.length} 次` : undefined,
+        suggestions: langchainResponse.autoActions,
+        actionsTaken: langchainResponse.autoActions,
+        needsUserInput: langchainResponse.needsUserInput,
+        autoRepairMode: false
+      };
+    } else {
+      // 使用原有的 AI 助理系統
+      let assistant = conversationInstances.get(currentConversationId);
+      if (!assistant) {
+        assistant = createAIProjectAssistant({
+          projectId,
+          projectName: projectName || 'Unknown Project',
+          containerStatus: 'running'
+        });
+        conversationInstances.set(currentConversationId, assistant);
+      }
+
+      if (autoRepairMode) {
+        // 啟用自動修正模式
+        assistant.setAutoRepairMode(true, 3);
+        
+        // 直接處理用戶訊息，自動修正會在內部處理
+        const response = await assistant.processUserMessage(message);
+        
+        responseData = {
+          message: response.message,
+          conversationId: currentConversationId,
+          projectReport: response.projectReport,
+          suggestions: response.suggestions,
+          actionsTaken: response.actionsTaken,
+          needsUserInput: response.needsUserInput,
+          autoRepairMode: true,
+          autoRepairResult: response.autoRepairResult
+        };
+      } else {
+        // 一般模式處理
+        responseData = await handleNormalMode(
+          assistant,
+          currentConversationId,
+          message,
+          useFullPrompt
+        );
+      }
     }
 
     // 清理過期的對話實例（簡單的記憶體管理）
@@ -155,6 +201,15 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatRespo
       if (oldestKey) {
         conversationInstances.delete(oldestKey);
         autoRepairStates.delete(oldestKey);
+      }
+    }
+
+    // 清理過期的 Langchain 引擎
+    if (langchainEngines.size > 50) {
+      const oldestEngineKey = langchainEngines.keys().next().value;
+      if (oldestEngineKey) {
+        langchainEngines.delete(oldestEngineKey);
+        console.log(`🧹 清理舊的 Langchain 引擎: ${oldestEngineKey}`);
       }
     }
 

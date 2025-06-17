@@ -93,7 +93,7 @@ class AutoRepairIntegrationManager {
           enableAdvancedTools: true
         },
         enableToolCallLogging: true,
-        maxToolCalls: 20 // 增加工具調用次數以支援自動修正
+        maxToolCalls: 30 // 增加工具調用次數以支援自動修正
       };
 
       const integration = createOpenAIIntegration(config);

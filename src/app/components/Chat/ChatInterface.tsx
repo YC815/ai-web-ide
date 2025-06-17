@@ -535,16 +535,16 @@ export function ChatInterface({
           timeoutMs: 45000,
         };
       } else {
-        // 使用原有的聊天 API
-        apiEndpoint = useFunctionCalling ? '/api/chat-with-tools' : '/api/chat';
+        // 預設使用新的 Langchain API
+        apiEndpoint = '/api/chat';
         requestBody = {
           message: userMessage,
           projectId: projectId || `ai-web-ide-${projectName.toLowerCase().replace(/\s+/g, '-')}`,
           projectName,
-          containerId: containerId,
           conversationId: activeWindowId,
           apiToken,
           autoRepairMode: autoFixMode,
+          useLangchain: true, // 啟用 Langchain 引擎
         };
       }
       

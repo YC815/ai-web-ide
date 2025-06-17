@@ -1,5 +1,5 @@
 // OpenAI 整合使用範例
-// 展示如何使用完整的 Node.js + GPT-4 function calling 流程
+// 展示如何使用完整的 Node.js + gpt-4o function calling 流程
 
 import { createOpenAIIntegration, OpenAIIntegrationConfig } from './openai';
 
@@ -10,7 +10,7 @@ export async function basicOpenAIExample() {
   // 1. 創建配置
   const config: OpenAIIntegrationConfig = {
     openaiApiKey: process.env.OPENAI_API_KEY || 'your-api-key',
-    model: 'gpt-4',
+    model: 'gpt-4o',
     aiEditorConfig: {
       projectPath: '/path/to/your/project',
       projectContext: {
@@ -58,7 +58,7 @@ export async function codeModificationExample() {
 
   const config: OpenAIIntegrationConfig = {
     openaiApiKey: process.env.OPENAI_API_KEY || 'your-api-key',
-    model: 'gpt-4',
+    model: 'gpt-4o',
     aiEditorConfig: {
       projectPath: '/path/to/your/project',
       projectContext: {
@@ -115,7 +115,7 @@ export async function toolCallVisualizationExample() {
 
   const config: OpenAIIntegrationConfig = {
     openaiApiKey: process.env.OPENAI_API_KEY || 'your-api-key',
-    model: 'gpt-4',
+    model: 'gpt-4o',
     aiEditorConfig: {
       projectPath: '/path/to/your/project',
       projectContext: {
@@ -196,7 +196,7 @@ export async function sessionManagementExample() {
 
   const config: OpenAIIntegrationConfig = {
     openaiApiKey: process.env.OPENAI_API_KEY || 'your-api-key',
-    model: 'gpt-4',
+    model: 'gpt-4o',
     aiEditorConfig: {
       projectPath: '/path/to/your/project',
       projectContext: {
@@ -255,7 +255,7 @@ export async function securityAndConfirmationExample() {
 
   const config: OpenAIIntegrationConfig = {
     openaiApiKey: process.env.OPENAI_API_KEY || 'your-api-key',
-    model: 'gpt-4',
+    model: 'gpt-4o',
     aiEditorConfig: {
       projectPath: '/path/to/your/project',
       projectContext: {
@@ -313,7 +313,7 @@ export async function completeWorkflowExample() {
 
   const config: OpenAIIntegrationConfig = {
     openaiApiKey: process.env.OPENAI_API_KEY || 'your-api-key',
-    model: 'gpt-4',
+    model: 'gpt-4o',
     aiEditorConfig: {
       projectPath: '/path/to/your/project',
       projectContext: {

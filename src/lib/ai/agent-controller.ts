@@ -265,7 +265,7 @@ export class AgentController {
         messages: history,
         tools: availableTools,
         tool_choice: 'auto',
-        model: 'gpt-4',
+        model: 'gpt-4o',
         temperature: 0.1,
       });
 

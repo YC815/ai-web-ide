@@ -1057,11 +1057,14 @@ export function createDockerToolkit(dockerContext: DockerContext): DockerToolkit
 /**
  * 創建預設Docker上下文配置
  */
-export function createDefaultDockerContext(containerId: string, containerName?: string): DockerContext {
+export function createDefaultDockerContext(containerId: string, containerName?: string, projectName?: string): DockerContext {
+  // 如果有專案名稱，使用專案特定的工作目錄
+  const workingDirectory = projectName ? `/app/workspace/${projectName}` : '/app';
+  
   return {
     containerId,
     containerName: containerName || `ai-dev-${containerId.substring(0, 12)}`,
-    workingDirectory: '/app',
+    workingDirectory,
     status: 'running'
   };
 }

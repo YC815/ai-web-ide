@@ -169,7 +169,7 @@ const functionDefs = dockerAI.getFunctionDefinitionsForOpenAI();
 
 // 在OpenAI API中使用
 const response = await openai.chat.completions.create({
-  model: "gpt-4",
+  model: "gpt-4o",
   messages: [{ role: "user", content: "請檢查容器內開發伺服器狀態" }],
   functions: functionDefs,
 });
