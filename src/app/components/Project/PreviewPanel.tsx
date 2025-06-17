@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 
 // 設備預設配置
 const DEVICE_PRESETS = {
@@ -17,15 +17,127 @@ const ENV_MODES = {
   production: { label: '生產', color: 'bg-green-500', icon: '🚀' }
 };
 
-export function PreviewPanel() {
+interface PreviewPanelProps {
+  containerId: string;
+  projectStatus: 'running' | 'stopped' | 'error';
+}
+
+export function PreviewPanel({ containerId, projectStatus }: PreviewPanelProps) {
   // 狀態管理
   const [selectedDevice, setSelectedDevice] = useState<keyof typeof DEVICE_PRESETS>('desktop');
   const [envMode, setEnvMode] = useState<keyof typeof ENV_MODES>('development');
   const [isLoading, setIsLoading] = useState(false);
   const [customSize, setCustomSize] = useState({ width: '400px', height: '600px' });
-  const [previewUrl, setPreviewUrl] = useState('http://localhost:3000');
+  const [previewUrl, setPreviewUrl] = useState('');
   const [errors, setErrors] = useState<string[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [devServerStatus, setDevServerStatus] = useState<'running' | 'stopped' | 'starting' | 'error'>('stopped');
+  const [showIframe, setShowIframe] = useState(false);
+
+  // 檢查開發服務器狀態並獲取正確的 URL
+  const checkDevServerStatus = async () => {
+    try {
+      // 首先檢查容器狀態和端口映射
+      const statusResponse = await fetch(`/api/docker-status?containerId=${containerId}&port=3000`);
+      const statusData = await statusResponse.json();
+      
+      if (statusData.success && statusData.containerStatus === 'running') {
+        if (statusData.serviceUrl && statusData.serviceStatus === 'accessible') {
+          // 使用實際的服務 URL
+          setPreviewUrl(statusData.serviceUrl);
+          setDevServerStatus('running');
+          setShowIframe(true);
+          setErrors([]);
+          return;
+        }
+      }
+
+      // 如果 docker-status 沒有返回可用的服務，檢查開發服務器
+      const devResponse = await fetch(`/api/docker-dev-server?containerId=${containerId}`);
+      const devData = await devResponse.json();
+      
+             if (devData.success) {
+         setDevServerStatus(devData.status);
+         if (devData.status === 'running' && devData.port) {
+           // 獲取端口映射來構建正確的 URL
+           if (statusData.success && statusData.portMappings) {
+             const mapping = statusData.portMappings.find(m => m.containerPort === devData.port);
+             if (mapping) {
+               setPreviewUrl(`http://localhost:${mapping.hostPort}`);
+             } else {
+               setPreviewUrl(`http://localhost:${devData.port}`);
+             }
+           } else {
+             setPreviewUrl(`http://localhost:${devData.port}`);
+           }
+           setShowIframe(true);
+           setErrors([]);
+         } else {
+           setShowIframe(false);
+         }
+       } else {
+         setDevServerStatus('stopped');
+         setShowIframe(false);
+       }
+    } catch (error) {
+      console.error('檢查開發服務器狀態失敗:', error);
+      setDevServerStatus('error');
+    }
+  };
+
+  // 自動啟動開發服務器
+  const startDevServer = async () => {
+    try {
+      setIsLoading(true);
+      setDevServerStatus('starting');
+      
+      const response = await fetch('/api/docker-dev-server', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          action: 'auto-detect-and-start', 
+          containerId 
+        })
+      });
+      
+      const data = await response.json();
+      
+             if (data.success) {
+         setDevServerStatus('running');
+         
+         // 重新檢查端口映射來獲取正確的 URL
+         try {
+           const statusResponse = await fetch(`/api/docker-status?containerId=${containerId}&port=${data.port || 3000}`);
+           const statusData = await statusResponse.json();
+           
+           if (statusData.success && statusData.portMappings) {
+             const mapping = statusData.portMappings.find(m => m.containerPort === (data.port || 3000));
+             if (mapping) {
+               setPreviewUrl(`http://localhost:${mapping.hostPort}`);
+             } else {
+               setPreviewUrl(`http://localhost:${data.port || 3000}`);
+             }
+           } else {
+             setPreviewUrl(`http://localhost:${data.port || 3000}`);
+           }
+         } catch (error) {
+           setPreviewUrl(`http://localhost:${data.port || 3000}`);
+         }
+         
+         setShowIframe(true);
+         setErrors([]);
+       } else {
+         setDevServerStatus('error');
+         setErrors([data.error || '啟動開發服務器失敗']);
+       }
+    } catch (error) {
+      console.error('啟動開發服務器失敗:', error);
+      setDevServerStatus('error');
+      setErrors(['無法連接到服務器']);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   // 取得當前設備配置
   const getCurrentDevice = () => {
@@ -38,8 +150,18 @@ export function PreviewPanel() {
   // 重新整理預覽
   const handleRefresh = async () => {
     setIsRefreshing(true);
-    // 模擬重新整理延遲
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    
+    // 如果有正在運行的預覽，重新載入 iframe
+    if (showIframe && previewUrl) {
+      const iframe = document.querySelector('#preview-iframe') as HTMLIFrameElement;
+      if (iframe) {
+        iframe.src = iframe.src; // 觸發重新載入
+      }
+    }
+    
+    // 重新檢查服務器狀態
+    await checkDevServerStatus();
+    
     setIsRefreshing(false);
   };
 
@@ -47,22 +169,26 @@ export function PreviewPanel() {
   const handleEnvironmentCheck = async () => {
     setIsLoading(true);
     try {
-      // 模擬環境檢測
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      await checkDevServerStatus();
       
-      // 模擬一些錯誤
-      const mockErrors = [
-        'TypeScript 類型錯誤: Property \'id\' is missing in type',
-        'ESLint: Missing dependency in useEffect'
-      ];
-      
-      setErrors(mockErrors);
+      // 如果服務器沒有運行，嘗試啟動
+      if (devServerStatus !== 'running' && projectStatus === 'running') {
+        await startDevServer();
+      }
     } catch (error) {
       console.error('環境檢測失敗:', error);
+      setErrors(['環境檢測失敗']);
     } finally {
       setIsLoading(false);
     }
   };
+
+  // 初始化檢查
+  useEffect(() => {
+    if (containerId && projectStatus === 'running') {
+      checkDevServerStatus();
+    }
+  }, [containerId, projectStatus, checkDevServerStatus]);
 
   const currentDevice = getCurrentDevice();
 
@@ -205,8 +331,8 @@ export function PreviewPanel() {
       )}
 
       {/* 預覽區域 */}
-      <div className="flex-1 p-4 bg-gray-100 dark:bg-gray-800 overflow-auto">
-        <div className="flex justify-center items-start min-h-full">
+      <div className="flex-1 bg-gray-100 dark:bg-gray-800 overflow-hidden">
+        <div className="w-full h-full flex justify-center items-center">
           {/* 設備框架 */}
           <div 
             className="bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-600 
@@ -215,7 +341,8 @@ export function PreviewPanel() {
               width: selectedDevice === 'desktop' ? '100%' : currentDevice.width,
               height: selectedDevice === 'desktop' ? '100%' : currentDevice.height,
               maxWidth: '100%',
-              maxHeight: '100%'
+              maxHeight: '100%',
+              margin: selectedDevice === 'desktop' ? '0' : '16px'
             }}
           >
             {/* 設備頂部指示器 (非桌面模式) */}
@@ -227,29 +354,85 @@ export function PreviewPanel() {
             )}
 
             {/* 預覽內容 */}
-            <div className="w-full h-full flex items-center justify-center">
+            <div className="w-full h-full">
               {isLoading ? (
-                <div className="text-center text-gray-500 dark:text-gray-400">
-                  <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-                  <p>載入環境檢測中...</p>
+                <div className="w-full h-full flex items-center justify-center text-gray-500 dark:text-gray-400">
+                  <div className="text-center">
+                    <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                    <p>{devServerStatus === 'starting' ? '正在啟動開發服務器...' : '載入環境檢測中...'}</p>
+                  </div>
+                </div>
+              ) : showIframe && previewUrl ? (
+                <iframe
+                  id="preview-iframe"
+                  src={previewUrl}
+                  className="w-full h-full border-0 rounded-lg"
+                  title="應用程式預覽"
+                  onLoad={() => console.log('預覽載入完成')}
+                  onError={() => {
+                    console.error('預覽載入失敗');
+                    setErrors(prev => [...prev, '預覽載入失敗，請檢查開發服務器']);
+                  }}
+                  style={{
+                    minHeight: selectedDevice === 'desktop' ? 'calc(100vh - 250px)' : 'auto'
+                  }}
+                />
+              ) : projectStatus !== 'running' ? (
+                <div className="w-full h-full flex items-center justify-center text-gray-500 dark:text-gray-400">
+                  <div className="text-center p-8">
+                    <div className="text-6xl mb-4">⏸️</div>
+                    <h3 className="text-lg font-medium mb-2">容器未運行</h3>
+                    <p className="text-sm">
+                      請先啟動專案容器才能查看預覽
+                    </p>
+                    <div className="mt-4 text-xs">
+                      容器狀態: {projectStatus}
+                    </div>
+                  </div>
+                </div>
+              ) : devServerStatus === 'error' ? (
+                <div className="w-full h-full flex items-center justify-center text-gray-500 dark:text-gray-400">
+                  <div className="text-center p-8">
+                    <div className="text-6xl mb-4">❌</div>
+                    <h3 className="text-lg font-medium mb-2">服務器錯誤</h3>
+                    <p className="text-sm mb-4">
+                      開發服務器無法正常運行
+                    </p>
+                    <button
+                      onClick={startDevServer}
+                      className="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded text-sm transition-colors"
+                    >
+                      重新啟動服務器
+                    </button>
+                  </div>
                 </div>
               ) : (
-                <div className="text-center text-gray-500 dark:text-gray-400 p-8">
-                  <div className="text-6xl mb-4">🚧</div>
-                  <h3 className="text-lg font-medium mb-2">預覽準備中</h3>
-                  <p className="text-sm">
-                    這裡將顯示您的 Next.js 應用程式實時預覽
-                  </p>
-                  <div className="mt-4 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg text-left">
-                    <h4 className="font-medium text-blue-700 dark:text-blue-300 mb-2">
-                      🎯 預覽功能特色:
-                    </h4>
-                    <ul className="text-sm space-y-1 text-blue-600 dark:text-blue-400">
-                      <li>• 📱 多設備響應式預覽</li>
-                      <li>• 🔄 實時熱重載</li>
-                      <li>• ⚙️ 環境模式切換</li>
-                      <li>• 🔍 自動錯誤檢測</li>
-                    </ul>
+                <div className="w-full h-full flex items-center justify-center text-gray-500 dark:text-gray-400">
+                  <div className="text-center p-8">
+                    <div className="text-6xl mb-4">🚀</div>
+                    <h3 className="text-lg font-medium mb-2">準備啟動預覽</h3>
+                    <p className="text-sm mb-4">
+                      開發服務器尚未運行，點擊下方按鈕啟動
+                    </p>
+                    <button
+                      onClick={startDevServer}
+                      disabled={isLoading}
+                      className="px-4 py-2 bg-green-500 hover:bg-green-600 disabled:bg-gray-400 
+                               text-white rounded text-sm transition-colors disabled:cursor-not-allowed"
+                    >
+                      啟動預覽服務器
+                    </button>
+                    <div className="mt-4 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg text-left">
+                      <h4 className="font-medium text-blue-700 dark:text-blue-300 mb-2">
+                        🎯 預覽功能特色:
+                      </h4>
+                      <ul className="text-sm space-y-1 text-blue-600 dark:text-blue-400">
+                        <li>• 📱 多設備響應式預覽</li>
+                        <li>• 🔄 實時熱重載</li>
+                        <li>• ⚙️ 環境模式切換</li>
+                        <li>• 🔍 自動錯誤檢測</li>
+                      </ul>
+                    </div>
                   </div>
                 </div>
               )}
@@ -263,15 +446,30 @@ export function PreviewPanel() {
         <div className="flex items-center justify-between text-sm">
           <div className="flex items-center gap-4">
             <span className="text-gray-600 dark:text-gray-400">
-              狀態: <span className="text-green-600 dark:text-green-400">● 就緒</span>
+              服務器: 
+              <span className={`ml-1 ${
+                devServerStatus === 'running' ? 'text-green-600 dark:text-green-400' :
+                devServerStatus === 'starting' ? 'text-yellow-600 dark:text-yellow-400' :
+                devServerStatus === 'error' ? 'text-red-600 dark:text-red-400' :
+                'text-gray-600 dark:text-gray-400'
+              }`}>
+                ● {devServerStatus === 'running' ? '運行中' : 
+                   devServerStatus === 'starting' ? '啟動中' :
+                   devServerStatus === 'error' ? '錯誤' : '已停止'}
+              </span>
             </span>
             <span className="text-gray-600 dark:text-gray-400">
               設備: {currentDevice.label}
             </span>
+            {previewUrl && (
+              <span className="text-gray-600 dark:text-gray-400 text-xs">
+                {previewUrl}
+              </span>
+            )}
           </div>
           
           <div className="flex items-center gap-2 text-gray-500 dark:text-gray-400">
-            <span>最後更新: 剛剛</span>
+            <span>容器: {projectStatus}</span>
           </div>
         </div>
       </div>
