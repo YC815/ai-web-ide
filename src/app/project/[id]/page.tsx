@@ -3,7 +3,8 @@
 import { useState, useEffect } from 'react';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
-import { ChatInterface } from '../../components/ChatInterface';
+import { ChatInterface } from '../../components/Chat/ChatInterface';
+import { PreviewPanel } from '../../components/Project/PreviewPanel';
 
 interface Props {
   params: Promise<{
@@ -194,51 +195,8 @@ export default function ProjectPage({ params }: Props) {
         </div>
 
         {/* 右側面板 - 實時預覽 */}
-        <div className="w-1/2 flex flex-col bg-white dark:bg-gray-800 h-full">
-          {/* 預覽控制欄 */}
-          <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
-            <div className="flex items-center space-x-4">
-              <h3 className="text-sm font-medium text-gray-900 dark:text-white">實時預覽</h3>
-              
-              {/* 環境切換 */}
-              <select className="px-2 py-1 border border-gray-300 dark:border-gray-600 rounded text-xs focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white">
-                <option>開發模式</option>
-                <option>預覽模式</option>
-                <option>生產模式</option>
-              </select>
-            </div>
-            
-            {/* 裝置模擬切換 */}
-            <div className="flex items-center space-x-2">
-              <button className="p-2 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 border border-gray-300 dark:border-gray-600 rounded">
-                <span>💻</span>
-              </button>
-              <button className="p-2 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 border border-gray-300 dark:border-gray-600 rounded">
-                <span>📱</span>
-              </button>
-              <button className="p-2 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 border border-gray-300 dark:border-gray-600 rounded">
-                <span>🔄</span>
-              </button>
-            </div>
-          </div>
-          
-          {/* 預覽區域 */}
-          <div className="flex-1 p-4">
-            <div className="w-full h-full bg-gray-100 dark:bg-gray-700 rounded-lg flex items-center justify-center">
-              <div className="text-center">
-                <div className="text-4xl mb-4">🚧</div>
-                <h4 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
-                  預覽功能開發中
-                </h4>
-                <p className="text-sm text-gray-600 dark:text-gray-400">
-                  Next.js 實時預覽將在此顯示
-                </p>
-                <div className="mt-4 text-xs text-gray-500 dark:text-gray-400">
-                  容器狀態: {project.status}
-                </div>
-              </div>
-            </div>
-          </div>
+        <div className="w-1/2 flex flex-col h-full">
+          <PreviewPanel containerId={project.containerId} projectStatus={project.status} />
         </div>
       </div>
     </div>

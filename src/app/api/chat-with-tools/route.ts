@@ -2,7 +2,9 @@
 // 整合 AI 編輯器工具和 OpenAI function calling，實現對話驅動式自動修正
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createOpenAIIntegration, OpenAIIntegrationConfig, OpenAIIntegration } from '@/lib/openai-integration';
+import { createOpenAIIntegration, OpenAIIntegrationConfig, OpenAIIntegration } from '@/lib/ai/openai';
+import { dockerConfigManager } from '@/lib/docker/config-manager';
+import { logger } from '@/lib/core/logger';
 
 // 自動修正模式的狀態管理
 interface AutoRepairSession {
@@ -12,7 +14,7 @@ interface AutoRepairSession {
   currentTask: string;
   repairAttempts: number;
   maxRepairAttempts: number;
-  lastToolOutput: any;
+  lastToolOutput: unknown;
   thoughtProcess: ThoughtProcess[];
   riskLevel: 'low' | 'medium' | 'high';
   needsUserIntervention: boolean;
@@ -57,27 +59,38 @@ class AutoRepairIntegrationManager {
     return AutoRepairIntegrationManager.instance;
   }
 
-  getOrCreateIntegration(
+  async getOrCreateIntegration(
     projectId: string, 
     projectName: string, 
     apiToken: string
-  ): OpenAIIntegration {
+  ): Promise<OpenAIIntegration> {
     const integrationKey = `${projectId}_${apiToken.slice(-8)}`;
     
     if (!this.integrations.has(integrationKey)) {
+      // 自動檢測 Docker 配置
+      const dockerConfig = await dockerConfigManager.autoDetectDockerContext(projectName);
+      
+      logger.info('Integration', 'Creating new OpenAI integration', {
+        projectId,
+        projectName,
+        integrationKey,
+        dockerConfigSuccess: dockerConfig.success,
+        dockerMessage: dockerConfig.message
+      });
+
       const config: OpenAIIntegrationConfig = {
         openaiApiKey: apiToken,
         model: 'gpt-4o',
-        aiEditorConfig: {
-          projectPath: process.cwd(),
-          projectContext: {
-            projectId,
-            projectName,
-            containerStatus: 'running'
+        dockerAIEditorConfig: {
+          dockerContext: dockerConfig.dockerContext || {
+            containerId: `fallback-${projectId}`,
+            containerName: `ai-dev-${projectName}`,
+            workingDirectory: '/app',
+            status: 'error'
           },
-          enableAdvancedTools: true,
           enableUserConfirmation: true,
-          enableActionLogging: true
+          enableActionLogging: true,
+          enableAdvancedTools: true
         },
         enableToolCallLogging: true,
         maxToolCalls: 20 // 增加工具調用次數以支援自動修正
@@ -85,7 +98,11 @@ class AutoRepairIntegrationManager {
 
       const integration = createOpenAIIntegration(config);
       this.integrations.set(integrationKey, integration);
+      
       console.log(`🚀 創建新的 OpenAI 整合實例: ${integrationKey}`);
+      if (!dockerConfig.success) {
+        console.warn(`⚠️ Docker 配置警告: ${dockerConfig.message}`);
+      }
     }
 
     return this.integrations.get(integrationKey)!;
@@ -144,16 +161,16 @@ class AutoRepairIntegrationManager {
    - 連續修正失敗時，主動請求用戶介入
    - 超出能力範圍時，誠實說明限制
 
-🔧 **可用工具**：
-- read_file: 讀取檔案內容
-- list_files: 列出檔案清單  
-- search_code: 搜尋代碼關鍵字
-- propose_diff: 生成代碼修改建議
-- run_command: 執行終端指令
+🔧 **可用Docker工具**：
+- docker_start_dev_server: 在容器內啟動開發伺服器
+- docker_restart_dev_server: 在容器內重啟開發伺服器
+- docker_read_log_tail: 讀取容器內日誌
+- docker_search_error_logs: 搜尋容器內錯誤日誌
+- docker_check_health: 檢查容器內服務健康狀態
+- docker_read_file: 讀取容器內檔案
+- docker_write_file: 寫入容器內檔案
+- docker_smart_monitor_and_recover: 智能監控與自動修復
 - ask_user: 與用戶確認操作
-- get_project_context: 獲取專案結構
-- get_git_diff: 獲取 Git 變更
-- test_file: 執行測試
 
 記住：在自動修正模式下，你需要主動、積極、持續地工作，直到任務真正完成或需要用戶介入。`;
   }
@@ -168,16 +185,16 @@ class AutoRepairIntegrationManager {
 - 生成精確的代碼修改建議
 - 與用戶確認重要操作
 
-🔧 **可用工具**：
-- read_file: 讀取檔案內容
-- list_files: 列出檔案清單
-- search_code: 搜尋代碼關鍵字
-- propose_diff: 生成代碼修改建議
-- run_command: 執行終端指令
+🔧 **可用Docker工具**：
+- docker_start_dev_server: 在容器內啟動開發伺服器
+- docker_restart_dev_server: 在容器內重啟開發伺服器
+- docker_read_log_tail: 讀取容器內日誌
+- docker_search_error_logs: 搜尋容器內錯誤日誌
+- docker_check_health: 檢查容器內服務健康狀態
+- docker_read_file: 讀取容器內檔案
+- docker_write_file: 寫入容器內檔案
+- docker_smart_monitor_and_recover: 智能監控與自動修復
 - ask_user: 與用戶確認操作
-- get_project_context: 獲取專案結構
-- get_git_diff: 獲取 Git 變更
-- test_file: 執行測試
 
 🛡️ **安全原則**：
 - 重要操作前先使用 ask_user 確認
@@ -231,7 +248,7 @@ class AutoRepairIntegrationManager {
     }
 
     let totalToolCalls = 0;
-    let allActionsTaken: string[] = [];
+    const allActionsTaken: string[] = [];
     let finalThoughtProcess: ThoughtProcess;
 
     // 更新當前任務
@@ -253,7 +270,7 @@ class AutoRepairIntegrationManager {
         totalToolCalls += result.toolCallsExecuted;
         
         // Step 2: 分析工具執行結果
-        const thoughtProcess = this.analyzeToolResults(result, session);
+        const thoughtProcess = this.analyzeToolResults(result);
         finalThoughtProcess = thoughtProcess;
         
         session.thoughtProcess.push(thoughtProcess);
@@ -322,7 +339,7 @@ class AutoRepairIntegrationManager {
     };
   }
 
-  private analyzeToolResults(result: any, session: AutoRepairSession): ThoughtProcess {
+  private analyzeToolResults(result: unknown): ThoughtProcess {
     const thoughtProcess: ThoughtProcess = {
       timestamp: new Date().toISOString(),
       phase: 'validation',
@@ -333,16 +350,17 @@ class AutoRepairIntegrationManager {
     };
 
     // 分析工具執行結果
-    if (result.toolCallsExecuted > 0) {
-      thoughtProcess.content = `執行了 ${result.toolCallsExecuted} 個工具調用`;
+    const resultObj = result as { toolCallsExecuted?: number; session?: { toolCallLogs?: Array<{ success: boolean; toolName: string; error?: string }> } };
+    if (resultObj.toolCallsExecuted && resultObj.toolCallsExecuted > 0) {
+      thoughtProcess.content = `執行了 ${resultObj.toolCallsExecuted} 個工具調用`;
       thoughtProcess.reasoning = '分析工具執行結果以判斷是否需要進一步修正';
       
       // 檢查是否有錯誤或警告
-      if (result.session?.toolCallLogs) {
-        const errors = result.session.toolCallLogs.filter((log: any) => log.success === false);
+      if (resultObj.session?.toolCallLogs) {
+        const errors = resultObj.session.toolCallLogs.filter(log => log.success === false);
         if (errors.length > 0) {
-          thoughtProcess.detectedIssues = errors.map((err: any) => 
-            `工具 ${err.toolName} 執行失敗: ${err.error}`
+          thoughtProcess.detectedIssues = errors.map(err => 
+            `工具 ${err.toolName} 執行失敗: ${err.error || '未知錯誤'}`
           );
         }
       }
@@ -351,7 +369,7 @@ class AutoRepairIntegrationManager {
     return thoughtProcess;
   }
 
-  private assessNeedsRepair(thoughtProcess: ThoughtProcess, result: any): {
+  private assessNeedsRepair(thoughtProcess: ThoughtProcess, result: unknown): {
     needsRepair: boolean;
     reason: string;
     riskLevel: 'low' | 'medium' | 'high';
@@ -366,8 +384,9 @@ class AutoRepairIntegrationManager {
     }
 
     // 檢查是否有工具執行失敗
-    if (result.session?.toolCallLogs) {
-      const failedCalls = result.session.toolCallLogs.filter((log: any) => log.success === false);
+    const resultObj = result as { session?: { toolCallLogs?: Array<{ success: boolean }> }; response?: string };
+    if (resultObj.session?.toolCallLogs) {
+      const failedCalls = resultObj.session.toolCallLogs.filter(log => log.success === false);
       if (failedCalls.length > 0) {
         return {
           needsRepair: true,
@@ -378,7 +397,7 @@ class AutoRepairIntegrationManager {
     }
 
     // 檢查回應內容是否表示需要繼續
-    const responseText = result.response.toLowerCase();
+    const responseText = (resultObj.response || '').toLowerCase();
     if (responseText.includes('錯誤') || responseText.includes('失敗') || responseText.includes('問題')) {
       return {
         needsRepair: true,
@@ -394,7 +413,7 @@ class AutoRepairIntegrationManager {
     };
   }
 
-  private generateRepairMessage(thoughtProcess: ThoughtProcess, needsRepair: any): string {
+  private generateRepairMessage(thoughtProcess: ThoughtProcess, needsRepair: { reason: string }): string {
     return `請根據以下問題進行自動修正：
 
 🔍 **檢測到的問題**：
@@ -511,7 +530,7 @@ export async function POST(request: NextRequest) {
     console.log(`🔄 處理請求: ${conversationId} - ${message.slice(0, 50)}... (自動修正: ${autoRepairMode})`);
 
     // 獲取或創建 OpenAI 整合實例
-    const openaiIntegration = integrationManager.getOrCreateIntegration(
+    const openaiIntegration = await integrationManager.getOrCreateIntegration(
       projectId, 
       projectName || 'Unknown Project', 
       apiToken
@@ -587,7 +606,7 @@ export async function POST(request: NextRequest) {
           averageExecutionTime: Math.round(stats.averageExecutionTime),
           toolUsage: stats.toolUsage
         },
-        pendingActions: pendingActions.map(action => ({
+        pendingActions: pendingActions.map((action: { id: string; toolName: string; status: string; confirmationRequest?: { message: string } }) => ({
           id: action.id,
           toolName: action.toolName,
           status: action.status,
@@ -645,7 +664,7 @@ export async function PUT(request: NextRequest) {
 
     console.log(`🔄 處理用戶確認: ${conversationId} - ${actionId} - ${confirmed}`);
 
-    const openaiIntegration = integrationManager.getOrCreateIntegration(
+    const openaiIntegration = await integrationManager.getOrCreateIntegration(
       projectId, 
       'Unknown Project', 
       apiToken

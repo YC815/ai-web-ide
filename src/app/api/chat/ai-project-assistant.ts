@@ -1,12 +1,12 @@
 // AI 專案助理 - 整合所有AI工具，讓AI智能地探索和管理專案
 // 支援自動修正模式，實現對話驅動式自動修正
-import { createAIContextManager, ProjectContext, ProjectSnapshot } from '../../../lib/ai-context-manager';
-import { createAIToolkit, AIToolkit } from '../../../lib/ai-tools';
+import { createAIContextManager, ProjectContext, ProjectSnapshot } from '../../../lib/ai/context-manager';
+import { createDockerToolkit, DockerToolkit, createDefaultDockerContext } from '../../../lib/docker/tools';
 import { 
   DynamicPromptBuilder, 
   createDynamicPromptBuilder, 
   ConversationContext 
-} from '../../../lib/dynamic-prompt-builder';
+} from '../../../lib/ai/prompt-builder';
 
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
@@ -65,7 +65,7 @@ export interface AutoRepairResult {
 // AI專案助理核心類
 export class AIProjectAssistant {
   private contextManager: ReturnType<typeof createAIContextManager>;
-  private toolkit: AIToolkit;
+  private toolkit: DockerToolkit;
   private conversationHistory: ChatMessage[] = [];
   private promptBuilder: DynamicPromptBuilder;
   private lastError?: string;
@@ -75,7 +75,8 @@ export class AIProjectAssistant {
 
   constructor(private projectContext: ProjectContext) {
     this.contextManager = createAIContextManager(projectContext);
-    this.toolkit = createAIToolkit(projectContext);
+    const dockerContext = createDefaultDockerContext(`${projectContext.projectId}-container`, `ai-dev-${projectContext.projectName}`);
+    this.toolkit = createDockerToolkit(dockerContext);
     this.promptBuilder = createDynamicPromptBuilder();
   }
 

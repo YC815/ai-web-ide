@@ -12,91 +12,45 @@ import { NextRequest, NextResponse } from 'next/server';
  * - 🔧 工具連接狀態驗證
  * - ⏱️ 響應時間測量
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export async function GET(_request: NextRequest) {
-  const startTime = Date.now();
-  
+export async function GET() {
   try {
-    // 基本系統資訊
-    const systemInfo = {
+    const healthData = {
+      status: 'healthy',
       timestamp: new Date().toISOString(),
+      service: 'AI Web IDE',
+      version: process.env.npm_package_version || '0.1.0',
+      environment: process.env.NODE_ENV || 'development',
       uptime: process.uptime(),
-      nodeVersion: process.version,
-      platform: process.platform,
-      arch: process.arch,
-      environment: process.env.NODE_ENV || 'development'
-    };
-
-    // 記憶體使用情況
-    const memoryUsage = process.memoryUsage();
-    const memoryInfo = {
-      rss: Math.round(memoryUsage.rss / 1024 / 1024), // MB
-      heapTotal: Math.round(memoryUsage.heapTotal / 1024 / 1024), // MB  
-      heapUsed: Math.round(memoryUsage.heapUsed / 1024 / 1024), // MB
-      external: Math.round(memoryUsage.external / 1024 / 1024), // MB
-      arrayBuffers: Math.round(memoryUsage.arrayBuffers / 1024 / 1024), // MB
-    };
-
-    // 檢查核心服務狀態
-    const services = await checkServicesStatus();
-    
-    // 計算響應時間
-    const responseTime = Date.now() - startTime;
-    
-    // 判斷整體健康狀態
-    const isHealthy = services.every(service => service.status === 'healthy');
-    const status = isHealthy ? 'healthy' : 'degraded';
-
-    // 健康檢查回應
-    const healthResponse = {
-      status,
-      timestamp: systemInfo.timestamp,
-      uptime: `${Math.floor(systemInfo.uptime / 3600)}h ${Math.floor((systemInfo.uptime % 3600) / 60)}m ${Math.floor(systemInfo.uptime % 60)}s`,
-      responseTime: `${responseTime}ms`,
-      system: systemInfo,
-      memory: memoryInfo,
-      services,
-      environment: {
-        nodeEnv: systemInfo.environment,
-        nextTelemetry: process.env.NEXT_TELEMETRY_DISABLED === '1' ? 'disabled' : 'enabled',
-        docker: process.env.DOCKER_HOST ? 'available' : 'not_available'
+      memory: {
+        used: process.memoryUsage().heapUsed,
+        total: process.memoryUsage().heapTotal,
+        external: process.memoryUsage().external,
+        rss: process.memoryUsage().rss
       },
-      version: {
-        app: '1.0.0',
-        build: process.env.BUILD_ID || 'development'
+      system: {
+        platform: process.platform,
+        arch: process.arch,
+        nodeVersion: process.version
       }
     };
 
-    // 根據健康狀態設定 HTTP 狀態碼
-    const httpStatus = isHealthy ? 200 : 503;
-
-    return NextResponse.json(healthResponse, { 
-      status: httpStatus,
+    return NextResponse.json(healthData, {
+      status: 200,
       headers: {
         'Cache-Control': 'no-cache, no-store, must-revalidate',
-        'X-Health-Check': 'ai-web-ide',
-        'X-Response-Time': `${responseTime}ms`
+        'Pragma': 'no-cache',
+        'Expires': '0'
       }
     });
-
   } catch (error) {
-    console.error('健康檢查失敗:', error);
-    
-    const errorResponse = {
-      status: 'unhealthy',
-      timestamp: new Date().toISOString(),
-      error: error instanceof Error ? error.message : 'Unknown error',
-      responseTime: `${Date.now() - startTime}ms`
-    };
-
-    return NextResponse.json(errorResponse, { 
-      status: 503,
-      headers: {
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-        'X-Health-Check': 'ai-web-ide',
-        'X-Health-Status': 'error'
-      }
-    });
+    return NextResponse.json(
+      {
+        status: 'unhealthy',
+        timestamp: new Date().toISOString(),
+        error: error instanceof Error ? error.message : 'Unknown error'
+      },
+      { status: 500 }
+    );
   }
 }
 
@@ -192,28 +146,7 @@ interface ServiceStatus {
 }
 
 // 支援 HEAD 請求進行快速健康檢查
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export async function HEAD(_request: NextRequest) {
-  try {
-    const services = await checkServicesStatus();
-    const isHealthy = services.every(service => service.status === 'healthy');
-    const status = isHealthy ? 200 : 503;
-    
-    return new NextResponse(null, { 
-      status,
-      headers: {
-        'X-Health-Status': isHealthy ? 'healthy' : 'degraded',
-        'Cache-Control': 'no-cache'
-      }
-    });
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  } catch (_error) {
-    return new NextResponse(null, { 
-      status: 503,
-      headers: {
-        'X-Health-Status': 'unhealthy',
-        'Cache-Control': 'no-cache'
-      }
-    });
-  }
+export async function HEAD() {
+  // 簡單的健康檢查，僅返回狀態碼
+  return new NextResponse(null, { status: 200 });
 } 

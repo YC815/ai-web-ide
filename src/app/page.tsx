@@ -1,4 +1,5 @@
-import { ProjectDashboard } from './components/ProjectDashboard';
+import { ProjectDashboard } from './components/Project/ProjectDashboard';
+import DockerStatusMonitor from '@/components/DockerStatusMonitor';
 
 export default function Home() {
   return (
@@ -37,6 +38,12 @@ export default function Home() {
 
       {/* 主內容區域 */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Docker 狀態監控面板 */}
+        <div className="mb-8">
+          <DockerStatusMonitor autoRefresh={true} refreshInterval={15000} />
+        </div>
+
+        {/* 專案控制台 */}
         <ProjectDashboard />
       </main>
     </div>
