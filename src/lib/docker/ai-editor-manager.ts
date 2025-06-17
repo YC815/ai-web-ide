@@ -83,7 +83,8 @@ export class DockerAIEditorManager {
       this.logger.logToolCall(parameters, startTime);
       
       // 檢查 Docker 上下文是否有效，如果無效則使用模擬模式
-      if (!this.isDockerContextValid()) {
+      const isValid = await this.isDockerContextValid();
+      if (!isValid) {
         this.logger.warn('Docker context invalid, using simulation mode', this.config.dockerContext);
         return this.executeInSimulationMode(toolName, parameters);
       }
@@ -225,7 +226,8 @@ export class DockerAIEditorManager {
   // ==================== Docker 工具處理方法 ====================
 
   private async handleStartDevServer(): Promise<DockerAIToolResponse<'docker_start_dev_server'>> {
-    if (!this.isDockerContextValid()) {
+    const isValid = await this.isDockerContextValid();
+    if (!isValid) {
       return this.createMockResponse('docker_start_dev_server', '無法啟動開發伺服器');
     }
 
@@ -348,7 +350,8 @@ export class DockerAIEditorManager {
   }
 
   private async handleCheckContainerHealth(): Promise<DockerAIToolResponse<'docker_check_container_health'>> {
-    if (!this.isDockerContextValid()) {
+    const isValid = await this.isDockerContextValid();
+    if (!isValid) {
       this.logger.warn('Docker context invalid, using simulation mode for container health check', { 
         dockerContext: this.config.dockerContext 
       });
@@ -404,7 +407,8 @@ export class DockerAIEditorManager {
   }
 
   private async handleReadFile(params: DockerAIToolParameters['docker_read_file']): Promise<DockerAIToolResponse<'docker_read_file'>> {
-    if (!this.isDockerContextValid()) {
+    const isValid = await this.isDockerContextValid();
+    if (!isValid) {
       this.logger.warn('Docker context invalid, using simulation mode for read file', { 
         filePath: params.filePath,
         dockerContext: this.config.dockerContext 
@@ -530,27 +534,31 @@ export class DockerAIEditorManager {
   // ==================== 私有輔助方法 ====================
 
   /**
-   * 檢查 Docker 上下文是否有效
+   * 檢查 Docker 上下文是否有效（增強版）
    */
-  private isDockerContextValid(): boolean {
+  private async isDockerContextValid(): Promise<boolean> {
     const { containerId, containerName } = this.config.dockerContext;
     
-    // 使用新的驗證函數
     try {
-      const { validateDockerContext, getDockerContextById } = require('./docker-context-config');
+      this.logger.debug('Validating Docker context', { containerId, containerName });
       
-      // 首先檢查基本格式
-      if (!validateDockerContext(this.config.dockerContext)) {
-        this.logger.warn('Docker context failed basic validation', { 
-          containerId, 
-          containerName,
-          workingDirectory: this.config.dockerContext.workingDirectory
-        });
+      // 基本格式檢查
+      if (!containerId || containerId.length < 12) {
+        this.logger.warn('Invalid Docker container ID format', { containerId });
         return false;
       }
       
-      // 檢查是否在已知的容器列表中
-      const knownContext = getDockerContextById(containerId);
+      // 檢查是否為虛擬容器 ID
+      if (containerId.includes('-container') || containerId.startsWith('test-') || containerId.startsWith('dev-')) {
+        this.logger.warn('Using virtual Docker container ID', { containerId, containerName });
+        return false;
+      }
+      
+      // 使用增強的動態檢測
+      const { getDockerContextById, autoFixDockerConnection } = await import('./docker-context-config');
+      
+      // 嘗試獲取容器配置
+      const knownContext = await getDockerContextById(containerId);
       if (knownContext) {
         this.logger.debug('Docker context found in known containers', { 
           containerId, 
@@ -570,7 +578,23 @@ export class DockerAIEditorManager {
         return true;
       }
       
-      this.logger.warn('Docker context not found in known containers', { containerId, containerName });
+      // 如果找不到，嘗試自動修復
+      this.logger.warn('Docker context not found in known containers, attempting auto-fix', { containerId, containerName });
+      
+      const fixResult = await autoFixDockerConnection(containerId);
+      if (fixResult.success && fixResult.suggestedContext) {
+        this.logger.info('Auto-fix succeeded, updating Docker context', { 
+          oldContainerId: containerId,
+          newContext: fixResult.suggestedContext,
+          message: fixResult.message
+        });
+        
+        // 更新配置為修復建議的容器
+        this.config.dockerContext = fixResult.suggestedContext;
+        return true;
+      }
+      
+      this.logger.error('Auto-fix failed', { message: fixResult.message });
       return false;
       
     } catch (error) {

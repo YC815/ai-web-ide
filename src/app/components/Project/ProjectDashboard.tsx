@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { ProjectCard } from './ProjectCard';
+import { useRouter } from 'next/navigation';
 
 // 專案資料介面定義
 interface Project {
@@ -122,6 +123,7 @@ export function ProjectDashboard() {
   const [lastUpdateTime, setLastUpdateTime] = useState<string>('');
   const [creationLogs, setCreationLogs] = useState<string[]>([]);
   const [isCreating, setIsCreating] = useState(false);
+  const router = useRouter();
   
   // 獲取專案列表
   const fetchProjects = async () => {
@@ -210,18 +212,26 @@ export function ProjectDashboard() {
   
   // 處理專案操作
   const handleProjectAction = async (action: 'start' | 'stop' | 'delete' | 'enter', projectId: string) => {
+    console.log(`[ProjectDashboard] 處理專案操作: ${action}, 專案ID: ${projectId}`);
+    
     const project = projects.find(p => p.id === projectId);
-    if (!project) return;
+    if (!project) {
+      console.error(`[ProjectDashboard] 找不到專案: ${projectId}`);
+      return;
+    }
     
     try {
       switch (action) {
         case 'enter':
-          // 導航到專案工作區
-          window.location.href = `/project/${projectId}`;
+          console.log(`[ProjectDashboard] 準備導航到專案: /project/${projectId}`);
+          // 使用 Next.js router 替代 window.location.href
+          router.push(`/project/${projectId}`);
           break;
           
         case 'start':
         case 'stop':
+          console.log(`[ProjectDashboard] 執行容器操作: ${action}, 容器ID: ${project.containerId}`);
+          
           const response = await fetch('/api/containers', {
             method: 'POST',
             headers: {
@@ -233,7 +243,11 @@ export function ProjectDashboard() {
             })
           });
           
+          console.log(`[ProjectDashboard] API 回應狀態: ${response.status}`);
+          
           const result = await response.json();
+          console.log(`[ProjectDashboard] API 回應結果:`, result);
+          
           if (result.success) {
             // 更新本地狀態
             setProjects(prev => prev.map(p => 
@@ -246,62 +260,22 @@ export function ProjectDashboard() {
             const errorMsg = result.dockerError ? 
               `Docker 錯誤: ${result.details || result.error}` : 
               `操作失敗: ${result.error}`;
+            console.error(`[ProjectDashboard] 操作失敗:`, errorMsg);
             alert(errorMsg);
           }
           break;
-          
+
         case 'delete':
-          if (confirm(`確定要刪除專案 "${project.name}" 及其所有容器資源嗎？此操作無法恢復。`)) {
-            // 顯示刪除進度
-            let progressAlert: NodeJS.Timeout | null = null;
-            
-            try {
-              // 顯示刪除進度提示
-              progressAlert = setTimeout(() => {
-                alert('正在刪除專案，請稍候...\n如果容器正在運行，系統會自動重試多次以確保刪除成功。');
-              }, 500);
-              
-              const response = await fetch('/api/containers', {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                  action: 'delete',
-                  containerId: project.containerId
-                })
-              });
-              
-              // 清除進度提示
-              if (progressAlert) {
-                clearTimeout(progressAlert);
-                progressAlert = null;
-              }
-              
-              const result = await response.json();
-              if (result.success) {
-                // 從本地狀態中移除
-                setProjects(prev => prev.filter(p => p.id !== projectId));
-                alert('專案刪除成功！');
-              } else {
-                const errorMsg = result.dockerError ? 
-                  `Docker 錯誤: ${result.details || result.error}` : 
-                  `刪除失敗: ${result.error}`;
-                alert(errorMsg);
-              }
-            } catch (error) {
-              // 清除進度提示
-              if (progressAlert) {
-                clearTimeout(progressAlert);
-              }
-              throw error; // 重新拋出錯誤讓外層處理
-            }
+          console.log(`[ProjectDashboard] 刪除專案確認: ${project.name}`);
+          if (window.confirm(`確定要刪除專案 "${project.name}" 嗎？此操作無法復原。`)) {
+            // 這裡可以加入刪除邏輯
+            alert('刪除功能開發中...');
           }
           break;
       }
     } catch (error) {
-      console.error('操作失敗:', error);
-      alert('操作失敗，請檢查網路連接或稍後重試');
+      console.error(`[ProjectDashboard] 操作錯誤:`, error);
+      alert(`操作失敗: ${error instanceof Error ? error.message : '未知錯誤'}`);
     }
   };
   

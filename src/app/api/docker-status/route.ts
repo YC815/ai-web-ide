@@ -1,6 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { execSync } from 'child_process';
 
+// 環境變數控制是否顯示詳細日誌
+const ENABLE_DOCKER_STATUS_LOGS = process.env.ENABLE_DOCKER_STATUS_LOGS === 'true';
+
+// 靜默執行 - 重寫 console 方法以避免日誌輸出
+const originalConsole = {
+  log: console.log,
+  error: console.error,
+  warn: console.warn,
+  info: console.info
+};
+
+// 靜默模式下的空函數
+const silentConsole = {
+  log: () => {},
+  error: () => {},
+  warn: () => {},
+  info: () => {}
+};
+
 export interface DockerStatusResponse {
   success: boolean;
   containerStatus?: 'running' | 'stopped' | 'error';
@@ -20,6 +39,11 @@ export interface DockerStatusResponse {
  * 不依賴 AI，直接檢測端口和服務可用性
  */
 export async function GET(request: NextRequest) {
+  // 啟用靜默模式 - 避免產生日誌
+  if (!ENABLE_DOCKER_STATUS_LOGS) {
+    Object.assign(console, silentConsole);
+  }
+
   const { searchParams } = new URL(request.url);
   const containerId = searchParams.get('containerId') || 'ai-web-ide-frontend';
   const targetPort = parseInt(searchParams.get('port') || '3000');
@@ -109,6 +133,11 @@ export async function GET(request: NextRequest) {
     };
 
     return NextResponse.json(errorResult, { status: 500 });
+  } finally {
+    // 恢復正常日誌
+    if (!ENABLE_DOCKER_STATUS_LOGS) {
+      Object.assign(console, originalConsole);
+    }
   }
 }
 

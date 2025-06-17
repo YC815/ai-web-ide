@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -H 0.0.0.0 -p 3000",
+    "dev": "NEXT_TELEMETRY_DISABLED=1 node -r ./src/lib/silent-logger.js ./node_modules/.bin/next dev -H 0.0.0.0 -p 3000",
+    "dev:verbose": "next dev -H 0.0.0.0 -p 3000",
+    "dev:silent": "NEXT_TELEMETRY_DISABLED=1 NODE_OPTIONS='--max-old-space-size=4096' next dev -H 0.0.0.0 -p 3000 2>/dev/null",
     "build": "next build",
     "start": "next start -H 0.0.0.0 -p 3000",
     "lint": "next lint",

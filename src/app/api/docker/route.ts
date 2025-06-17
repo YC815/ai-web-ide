@@ -5,7 +5,19 @@ import { spawn, exec } from 'child_process';
 import { promisify } from 'util';
 import { createDockerAIEditorManager, createDefaultDockerContext } from '@/lib/docker';
 
+// 增加 maxBuffer 限制的 execAsync
 const execAsync = promisify(exec);
+
+// 安全的 exec 函數，支援大量輸出
+const safeExecAsync = (command: string, options: { maxBuffer?: number; timeout?: number } = {}) => {
+  const defaultOptions = {
+    maxBuffer: 50 * 1024 * 1024, // 50MB buffer
+    timeout: 30000, // 30秒超時
+    ...options
+  };
+  
+  return execAsync(command, defaultOptions);
+};
 
 export interface DockerApiResponse {
   success: boolean;
@@ -148,7 +160,7 @@ export async function GET(request: NextRequest) {
 }
 
 /**
- * 在Docker容器內執行命令
+ * 在Docker容器內執行命令 - 修復版本
  */
 async function handleExecCommand(
   containerRef: string, 
@@ -156,6 +168,13 @@ async function handleExecCommand(
   workingDirectory?: string
 ) {
   try {
+    // 檢查是否為可能產生大量輸出的命令
+    const isDangerousCommand = command.some(cmd => 
+      cmd.includes('-R') || 
+      cmd.includes('--recursive') || 
+      (cmd === 'ls' && command.includes('-R'))
+    );
+
     // 構建docker exec命令
     const dockerCmd = [
       'docker', 'exec',
@@ -166,7 +185,16 @@ async function handleExecCommand(
 
     console.log('執行Docker命令:', dockerCmd.join(' '));
 
-    const { stdout, stderr } = await execAsync(dockerCmd.join(' '));
+    // 如果是危險命令，使用限制性的執行方式
+    if (isDangerousCommand) {
+      return await handleLargeOutputCommand(dockerCmd);
+    }
+
+    // 一般命令使用安全的 exec
+    const { stdout, stderr } = await safeExecAsync(dockerCmd.join(' '), {
+      maxBuffer: 10 * 1024 * 1024, // 10MB
+      timeout: 30000
+    });
 
     return NextResponse.json({
       success: true,
@@ -175,6 +203,17 @@ async function handleExecCommand(
     });
   } catch (error: any) {
     console.error('Docker exec error:', error);
+    
+    // 檢查是否為 maxBuffer 錯誤
+    if (error.message && error.message.includes('maxBuffer')) {
+      return NextResponse.json({
+        success: false,
+        stdout: error.stdout || '',
+        stderr: error.stderr || '',
+        error: '輸出內容過大，請嘗試使用更具體的路徑或減少遞迴深度。建議使用 tree 命令或指定具體目錄。'
+      });
+    }
+
     return NextResponse.json({
       success: false,
       stdout: error.stdout || '',
@@ -185,11 +224,103 @@ async function handleExecCommand(
 }
 
 /**
+ * 處理可能產生大量輸出的命令
+ */
+async function handleLargeOutputCommand(dockerCmd: string[]): Promise<NextResponse> {
+  return new Promise((resolve) => {
+    const child = spawn(dockerCmd[0], dockerCmd.slice(1), {
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+
+    let stdout = '';
+    let stderr = '';
+    let isTimeout = false;
+    let isBufferExceeded = false;
+    const maxOutputSize = 5 * 1024 * 1024; // 5MB 限制
+
+    // 設置超時
+    const timeout = setTimeout(() => {
+      isTimeout = true;
+      child.kill('SIGTERM');
+    }, 30000); // 30秒
+
+    child.stdout.on('data', (data) => {
+      const chunk = data.toString();
+      if (stdout.length + chunk.length > maxOutputSize) {
+        isBufferExceeded = true;
+        child.kill('SIGTERM');
+        return;
+      }
+      stdout += chunk;
+    });
+
+    child.stderr.on('data', (data) => {
+      const chunk = data.toString();
+      if (stderr.length + chunk.length > maxOutputSize) {
+        isBufferExceeded = true;
+        child.kill('SIGTERM');
+        return;
+      }
+      stderr += chunk;
+    });
+
+    child.on('close', (code) => {
+      clearTimeout(timeout);
+      
+      if (isTimeout) {
+        resolve(NextResponse.json({
+          success: false,
+          stdout: stdout.trim(),
+          stderr: stderr.trim(),
+          error: '命令執行超時（30秒）。建議使用更具體的路徑或較小的目錄範圍。'
+        }));
+        return;
+      }
+
+      if (isBufferExceeded) {
+        resolve(NextResponse.json({
+          success: false,
+          stdout: stdout.trim() + '\n[輸出被截斷 - 內容過大]',
+          stderr: stderr.trim(),
+          error: '輸出內容過大已被截斷。建議使用 tree 命令限制深度，或指定更具體的目錄路徑。'
+        }));
+        return;
+      }
+
+      if (code === 0) {
+        resolve(NextResponse.json({
+          success: true,
+          stdout: stdout.trim(),
+          stderr: stderr.trim()
+        }));
+      } else {
+        resolve(NextResponse.json({
+          success: false,
+          stdout: stdout.trim(),
+          stderr: stderr.trim(),
+          error: `命令執行失敗，退出代碼: ${code}`
+        }));
+      }
+    });
+
+    child.on('error', (error) => {
+      clearTimeout(timeout);
+      resolve(NextResponse.json({
+        success: false,
+        stdout: stdout.trim(),
+        stderr: stderr.trim(),
+        error: `命令執行錯誤: ${error.message}`
+      }));
+    });
+  });
+}
+
+/**
  * 檢查Docker容器狀態
  */
 async function handleStatusCheck(containerRef: string) {
   try {
-    const { stdout } = await execAsync(`docker inspect ${containerRef} --format='{{.State.Status}}'`);
+    const { stdout } = await safeExecAsync(`docker inspect ${containerRef} --format='{{.State.Status}}'`);
     const status = stdout.trim();
 
     return NextResponse.json({
@@ -212,7 +343,7 @@ async function handleStatusCheck(containerRef: string) {
 async function handleHealthCheck(containerRef: string) {
   try {
     // 檢查容器是否在運行
-    const { stdout: statusOutput } = await execAsync(`docker inspect ${containerRef} --format='{{.State.Status}}'`);
+    const { stdout: statusOutput } = await safeExecAsync(`docker inspect ${containerRef} --format='{{.State.Status}}'`);
     const status = statusOutput.trim();
 
     if (status !== 'running') {
@@ -225,7 +356,7 @@ async function handleHealthCheck(containerRef: string) {
 
     // 檢查容器的健康檢查狀態（如果有配置）
     try {
-      const { stdout: healthOutput } = await execAsync(`docker inspect ${containerRef} --format='{{.State.Health.Status}}'`);
+      const { stdout: healthOutput } = await safeExecAsync(`docker inspect ${containerRef} --format='{{.State.Health.Status}}'`);
       const healthStatus = healthOutput.trim();
       
       if (healthStatus && healthStatus !== '<no value>') {
@@ -241,7 +372,7 @@ async function handleHealthCheck(containerRef: string) {
 
     // 如果沒有健康檢查配置，檢查基本連接性
     try {
-      await execAsync(`docker exec ${containerRef} echo "health check"`);
+      await safeExecAsync(`docker exec ${containerRef} echo "health check"`);
       return NextResponse.json({
         success: true,
         health: 'healthy',
@@ -268,7 +399,7 @@ async function handleHealthCheck(containerRef: string) {
  */
 async function handleGetLogs(containerRef: string) {
   try {
-    const { stdout } = await execAsync(`docker logs --tail 1000 ${containerRef}`);
+    const { stdout } = await safeExecAsync(`docker logs --tail 1000 ${containerRef}`);
     
     return NextResponse.json({
       success: true,
@@ -289,7 +420,7 @@ async function handleGetLogs(containerRef: string) {
  */
 async function handleStartContainer(containerRef: string) {
   try {
-    const { stdout } = await execAsync(`docker start ${containerRef}`);
+    const { stdout } = await safeExecAsync(`docker start ${containerRef}`);
     
     return NextResponse.json({
       success: true,
@@ -310,7 +441,7 @@ async function handleStartContainer(containerRef: string) {
  */
 async function handleStopContainer(containerRef: string) {
   try {
-    const { stdout } = await execAsync(`docker stop ${containerRef}`);
+    const { stdout } = await safeExecAsync(`docker stop ${containerRef}`);
     
     return NextResponse.json({
       success: true,
@@ -331,7 +462,7 @@ async function handleStopContainer(containerRef: string) {
  */
 async function handleRestartContainer(containerRef: string) {
   try {
-    const { stdout } = await execAsync(`docker restart ${containerRef}`);
+    const { stdout } = await safeExecAsync(`docker restart ${containerRef}`);
     
     return NextResponse.json({
       success: true,

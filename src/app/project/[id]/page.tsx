@@ -24,24 +24,35 @@ interface Project {
 
 // 獲取專案資訊的函數
 async function getProject(id: string): Promise<Project | null> {
+  console.log(`[ProjectPage] 開始獲取專案資訊, ID: ${id}`);
+  
   try {
+    console.log(`[ProjectPage] 發送請求到 /api/containers`);
+    
     const response = await fetch('/api/containers', {
       cache: 'no-store',
     });
     
+    console.log(`[ProjectPage] API 回應狀態: ${response.status}`);
+    
     if (!response.ok) {
+      console.error(`[ProjectPage] API 請求失敗: ${response.status} ${response.statusText}`);
       throw new Error('Failed to fetch projects');
     }
     
     const result = await response.json();
+    console.log(`[ProjectPage] API 回應結果:`, result);
     
     if (result.success) {
+      console.log(`[ProjectPage] 成功獲取 ${result.data.length} 個專案`);
       const project = result.data.find((p: Project) => p.id === id);
+      console.log(`[ProjectPage] 尋找專案 ${id}:`, project ? '找到' : '未找到', project);
       return project || null;
     }
+    console.log(`[ProjectPage] API 回應失敗:`, result);
     return null;
   } catch (error) {
-    console.error('獲取專案資訊失敗:', error);
+    console.error('[ProjectPage] 獲取專案資訊失敗:', error);
     return null;
   }
 }
@@ -50,35 +61,86 @@ export default function ProjectPage({ params }: Props) {
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'chat' | 'todo'>('chat');
+  const [error, setError] = useState<string | null>(null);
 
   
   // 載入專案資訊
   useEffect(() => {
     const loadProject = async () => {
-      const resolvedParams = await params;
-      const projectData = await getProject(resolvedParams.id);
-      setProject(projectData);
-      setLoading(false);
+      try {
+        console.log(`[ProjectPage] useEffect 觸發，開始載入專案`);
+        setLoading(true);
+        setError(null);
+        
+        const resolvedParams = await params;
+        console.log(`[ProjectPage] 解析 params:`, resolvedParams);
+        
+        const projectId = resolvedParams.id;
+        console.log(`[ProjectPage] 專案 ID: ${projectId}`);
+        
+        const projectData = await getProject(projectId);
+        console.log(`[ProjectPage] 載入專案結果:`, projectData);
+        
+        if (projectData) {
+          setProject(projectData);
+          console.log(`[ProjectPage] 專案載入成功: ${projectData.name}`);
+        } else {
+          console.log(`[ProjectPage] 專案未找到: ${projectId}`);
+          setError(`專案未找到: ${projectId}`);
+        }
+      } catch (err) {
+        console.error(`[ProjectPage] 載入專案時發生錯誤:`, err);
+        setError(err instanceof Error ? err.message : '載入專案時發生未知錯誤');
+      } finally {
+        setLoading(false);
+        console.log(`[ProjectPage] 載入完成`);
+      }
     };
     
     loadProject();
   }, [params]);
   
   if (loading) {
+    console.log(`[ProjectPage] 顯示載入畫面`);
     return (
       <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
           <span className="mt-2 text-gray-600 dark:text-gray-400">載入專案中...</span>
+          <div className="mt-4 text-xs text-gray-500">
+            檢查 console 查看詳細載入過程
+          </div>
+        </div>
+      </div>
+    );
+  }
+  
+  if (error) {
+    console.log(`[ProjectPage] 顯示錯誤訊息: ${error}`);
+    return (
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
+        <div className="text-center">
+          <div className="text-4xl mb-4">❌</div>
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">載入錯誤</h2>
+          <p className="text-gray-600 dark:text-gray-400 mb-4">{error}</p>
+          <button
+            onClick={() => window.location.href = '/'}
+            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+          >
+            返回首頁
+          </button>
         </div>
       </div>
     );
   }
   
   if (!project) {
+    console.log(`[ProjectPage] 專案為 null，顯示 not found`);
     notFound();
   }
   
+  console.log(`[ProjectPage] 渲染專案頁面: ${project.name}`);
+
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       {/* 頂部導航欄 */}
@@ -175,7 +237,11 @@ export default function ProjectPage({ params }: Props) {
           {/* 內容區域 */}
           <div className="flex-1 min-h-0">
             {activeTab === 'chat' ? (
-              <ChatInterface projectName={project.name} />
+              <ChatInterface 
+                projectName={project.name} 
+                projectId={project.id}
+                containerId={project.containerId}
+              />
             ) : (
               <div className="flex-1 flex flex-col bg-white dark:bg-gray-800 h-full">
                 <div className="flex-1 p-4">

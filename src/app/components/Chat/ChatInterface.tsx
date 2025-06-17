@@ -380,7 +380,15 @@ const ConfirmationDialog = ({
 };
 
 // 主聊天介面組件
-export function ChatInterface({ projectName }: { projectName: string }) {
+export function ChatInterface({ 
+  projectName, 
+  projectId, 
+  containerId 
+}: { 
+  projectName: string;
+  projectId?: string;
+  containerId?: string;
+}) {
   const [chatWindows, setChatWindows] = useState<ChatWindow[]>([]);
   const [activeWindowId, setActiveWindowId] = useState<string>('');
   const [currentMessage, setCurrentMessage] = useState('');
@@ -400,8 +408,9 @@ export function ChatInterface({ projectName }: { projectName: string }) {
   const [autoFixIteration, setAutoFixIteration] = useState(0);
   const [maxAutoFixIterations] = useState(10); // 最大迭代次數防止無限循環
   
-  // 生成穩定的專案 ID（基於專案名稱）
-  const projectId = `ai-web-ide-${projectName.toLowerCase().replace(/\s+/g, '-')}`;
+  // 新增 Agent 控制框架模式
+  const [useAgentFramework, setUseAgentFramework] = useState(true); // 預設啟用 Agent 框架
+  const [agentStats, setAgentStats] = useState<any>(null);
   
   // 生成唯一ID，避免hydration錯誤
   const generateId = (prefix: string) => {
@@ -506,34 +515,109 @@ export function ChatInterface({ projectName }: { projectName: string }) {
     ));
 
     try {
-      // 根據 autoFixMode 決定使用哪個 API
-      const apiEndpoint = useFunctionCalling ? '/api/chat-with-tools' : '/api/chat';
+      // 根據配置決定使用哪個 API
+      let apiEndpoint: string;
+      let requestBody: any;
+
+      if (useAgentFramework) {
+        // 使用新的 Agent 控制框架
+        apiEndpoint = '/api/chat-agent';
+        requestBody = {
+          message: userMessage,
+          projectId: projectId || `ai-web-ide-${projectName.toLowerCase().replace(/\s+/g, '-')}`,
+          projectName,
+          containerId: containerId,
+          conversationId: activeWindowId,
+          apiToken,
+          enableAutoRepair: autoFixMode,
+          enableLogging: true,
+          maxToolCalls: 8,
+          timeoutMs: 45000,
+        };
+      } else {
+        // 使用原有的聊天 API
+        apiEndpoint = useFunctionCalling ? '/api/chat-with-tools' : '/api/chat';
+        requestBody = {
+          message: userMessage,
+          projectId: projectId || `ai-web-ide-${projectName.toLowerCase().replace(/\s+/g, '-')}`,
+          projectName,
+          containerId: containerId,
+          conversationId: activeWindowId,
+          apiToken,
+          autoRepairMode: autoFixMode,
+        };
+      }
       
       const response = await fetch(apiEndpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          message: userMessage,
-          projectId: projectId,
-          projectName,
-          conversationId: activeWindowId,
-          apiToken,
-          autoRepairMode: autoFixMode, // 直接傳遞自動修正模式狀態
-        }),
+        body: JSON.stringify(requestBody),
       });
 
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        // 嘗試讀取錯誤詳情
+        let errorDetails = '';
+        try {
+          const errorData = await response.json();
+          errorDetails = errorData.error || errorData.message || '';
+        } catch {
+          // 如果無法解析 JSON，使用狀態文字
+          errorDetails = response.statusText || '';
+        }
+        
+        // 根據狀態碼提供具體的錯誤訊息
+        let userFriendlyMessage = '';
+        switch (response.status) {
+          case 400:
+            userFriendlyMessage = '請求參數錯誤，請檢查輸入內容';
+            break;
+          case 401:
+            userFriendlyMessage = 'API Token 無效或已過期，請重新設定';
+            break;
+          case 403:
+            userFriendlyMessage = '沒有權限執行此操作';
+            break;
+          case 429:
+            userFriendlyMessage = 'API 請求頻率過高，請稍後再試';
+            break;
+          case 500:
+            userFriendlyMessage = '伺服器內部錯誤';
+            if (errorDetails.includes('OpenAI')) {
+              userFriendlyMessage += ' - OpenAI API 問題';
+            } else if (errorDetails.includes('Docker')) {
+              userFriendlyMessage += ' - Docker 服務問題';
+            }
+            break;
+          case 502:
+          case 503:
+          case 504:
+            userFriendlyMessage = '服務暫時不可用，請稍後重試';
+            break;
+          default:
+            userFriendlyMessage = `未知錯誤 (${response.status})`;
+        }
+        
+        // 組合完整的錯誤訊息
+        const fullErrorMessage = errorDetails 
+          ? `${userFriendlyMessage}: ${errorDetails}`
+          : userFriendlyMessage;
+          
+        throw new Error(fullErrorMessage);
       }
 
       const result = await response.json();
       
       if (result.success) {
-        // 處理待處理的操作
-        if (result.data.pendingActions && result.data.pendingActions.length > 0) {
+        // 處理待處理的操作（僅在非 Agent 框架模式下）
+        if (!useAgentFramework && result.data.pendingActions && result.data.pendingActions.length > 0) {
           setPendingActions(result.data.pendingActions);
+        }
+
+        // 更新 Agent 統計資訊（僅在 Agent 框架模式下）
+        if (useAgentFramework && result.data.agentStats) {
+          setAgentStats(result.data.agentStats);
         }
 
         // 添加 AI 回應到聊天視窗
@@ -545,7 +629,7 @@ export function ChatInterface({ projectName }: { projectName: string }) {
           tokens: result.data.tokens,
           cost: result.data.cost,
           toolCallsExecuted: result.data.toolCallsExecuted,
-          stats: result.data.stats
+          stats: result.data.stats || result.data.agentStats
         };
 
         setChatWindows(prev => prev.map(window => 
@@ -707,16 +791,72 @@ export function ChatInterface({ projectName }: { projectName: string }) {
     console.log('🛑 自動修正已停止');
   };
   
+  // 診斷系統問題
+  const runDiagnostics = async () => {
+    const diagnostics = {
+      apiToken: !!apiToken && apiToken.startsWith('sk-'),
+      projectId: !!projectId,
+      serverHealth: false,
+      dockerStatus: false,
+    };
+
+    try {
+      // 檢查伺服器健康狀態
+      const healthResponse = await fetch('/api/health');
+      diagnostics.serverHealth = healthResponse.ok;
+
+      // 檢查 Docker 狀態（如果伺服器正常）
+      if (diagnostics.serverHealth) {
+        try {
+          const dockerResponse = await fetch('/api/docker-status');
+          diagnostics.dockerStatus = dockerResponse.ok;
+        } catch {
+          diagnostics.dockerStatus = false;
+        }
+      }
+    } catch {
+      diagnostics.serverHealth = false;
+    }
+
+    // 生成診斷報告
+    const issues = [];
+    if (!diagnostics.apiToken) {
+      issues.push('❌ API Token 未設定或格式錯誤（應以 sk- 開頭）');
+    }
+    if (!diagnostics.projectId) {
+      issues.push('❌ 專案 ID 未設定');
+    }
+    if (!diagnostics.serverHealth) {
+      issues.push('❌ 伺服器連線失敗');
+    }
+    if (!diagnostics.dockerStatus) {
+      issues.push('⚠️ Docker 服務可能未運行（部分功能受限）');
+    }
+
+    const diagnosticMessage: ChatMessage = {
+      id: generateId('msg-diagnostic'),
+      role: 'assistant',
+      content: `🔍 **系統診斷報告**\n\n${
+        issues.length === 0 
+          ? '✅ 所有系統檢查均正常' 
+          : `發現 ${issues.length} 個問題：\n\n${issues.join('\n')}\n\n**建議解決方案：**\n• 請檢查 API Token 設定\n• 確認 Docker 服務是否運行\n• 重新載入頁面再試`
+      }`,
+      timestamp: new Date(),
+    };
+
+    setChatWindows(prev => prev.map(window => 
+      window.id === activeWindowId 
+        ? { ...window, messages: [...window.messages, diagnosticMessage] }
+        : window
+    ));
+  };
+  
   return (
     <div className="flex flex-col bg-white dark:bg-gray-800 h-full">
       {/* 專案狀態指示器 */}
-      <div className="flex-shrink-0">
+      <div className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
         <ProjectStatusIndicator projectName={projectName} />
-      </div>
-      
-      {/* 開發伺服器狀態欄 */}
-      <div className="flex-shrink-0">
-        <DevServerStatusBar projectId={projectId} />
+        <DevServerStatusBar projectId={containerId || projectId || `ai-web-ide-${projectName.toLowerCase().replace(/\s+/g, '-')}`} />
       </div>
       
       {/* 聊天視窗選擇器 */}
@@ -967,6 +1107,15 @@ export function ChatInterface({ projectName }: { projectName: string }) {
             >
               <span className="mr-2">📤</span>
               {autoFixRunning ? '自動修正中...' : (autoFixMode ? '開始自動實作' : '發送')}
+            </button>
+            <button
+              onClick={runDiagnostics}
+              disabled={isLoading || autoFixRunning}
+              className="inline-flex items-center px-3 py-1 border border-gray-300 dark:border-gray-600 text-xs font-medium rounded-md text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 disabled:bg-gray-100 disabled:cursor-not-allowed transition-colors"
+              title="檢查系統狀態和常見問題"
+            >
+              <span className="mr-1">🔍</span>
+              診斷
             </button>
           </div>
         </div>

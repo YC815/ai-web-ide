@@ -4,9 +4,23 @@
  */
 
 import { DockerContext } from './tools';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 
-// 修復後的 Docker 上下文配置
+const execAsync = promisify(exec);
+
+// 動態 Docker 上下文配置
 export const DOCKER_CONTEXTS = {
+  // 當前容器（新增）
+  currentWebTest: {
+    containerId: '41acd88ac05a',
+    containerName: 'ai-web-ide-web-test-1750130681993',
+    workingDirectory: '/app/workspace/web_test',
+    status: 'running' as const,
+    projectName: 'web_test',
+    hasPackageJson: true
+  },
+
   // Web Test 容器
   webTest: {
     containerId: '4bf66b074def',
@@ -49,23 +63,81 @@ export const DOCKER_CONTEXTS = {
 } as const;
 
 /**
- * 根據容器ID獲取 Docker 上下文
+ * 動態檢測並更新 Docker 容器狀態
  */
-export function getDockerContextById(containerId: string): DockerContext | null {
-  const context = Object.values(DOCKER_CONTEXTS).find(ctx => 
+export async function refreshDockerContexts(): Promise<void> {
+  try {
+    console.log('🔄 正在刷新 Docker 容器狀態...');
+    
+    const { stdout } = await execAsync('docker ps -a --format "{{.ID}}\t{{.Names}}\t{{.Status}}"');
+    const containers = stdout.trim().split('\n').map(line => {
+      const [id, name, status] = line.split('\t');
+      return { id, name, status: status.toLowerCase().includes('up') ? 'running' : 'stopped' };
+    });
+
+    // 動態更新容器狀態
+    for (const container of containers) {
+      const context = Object.values(DOCKER_CONTEXTS).find(ctx => 
+        ctx.containerId.startsWith(container.id) || ctx.containerName === container.name
+      );
+      
+      if (context) {
+        // @ts-ignore - 動態更新狀態
+        context.status = container.status as 'running' | 'stopped';
+      }
+    }
+
+    console.log('✅ Docker 容器狀態已更新');
+  } catch (error) {
+    console.warn('⚠️ 無法刷新 Docker 容器狀態:', error);
+  }
+}
+
+/**
+ * 根據容器ID獲取 Docker 上下文（增強版）
+ */
+export async function getDockerContextById(containerId: string): Promise<DockerContext | null> {
+  // 首先從靜態配置中查找
+  let context = Object.values(DOCKER_CONTEXTS).find(ctx => 
     ctx.containerId === containerId || ctx.containerId.startsWith(containerId)
   );
   
-  if (!context) {
-    return null;
+  if (context) {
+    return {
+      containerId: context.containerId,
+      containerName: context.containerName,
+      workingDirectory: context.workingDirectory,
+      status: context.status
+    };
+  }
+
+  // 如果靜態配置中找不到，嘗試動態檢測
+  try {
+    console.log(`🔍 靜態配置中未找到容器 ${containerId}，嘗試動態檢測...`);
+    
+    const { stdout } = await execAsync(`docker inspect ${containerId} --format "{{.Id}}\t{{.Name}}\t{{.State.Status}}"`);
+    const [fullId, name, status] = stdout.trim().split('\t');
+    
+    if (fullId && name) {
+      console.log(`✅ 動態檢測到容器: ${fullId.substring(0, 12)} (${name})`);
+      
+      const dynamicContext = {
+        containerId: fullId.substring(0, 12),
+        containerName: name.startsWith('/') ? name.substring(1) : name,
+        workingDirectory: '/app', // 預設工作目錄
+        status: status === 'running' ? 'running' as const : 'stopped' as const
+      };
+
+      // 將動態檢測的容器加入配置（記憶體中）
+      await addDynamicContainer(dynamicContext);
+      
+      return dynamicContext;
+    }
+  } catch (error) {
+    console.warn(`⚠️ 無法動態檢測容器 ${containerId}:`, error);
   }
   
-  return {
-    containerId: context.containerId,
-    containerName: context.containerName,
-    workingDirectory: context.workingDirectory,
-    status: context.status
-  };
+  return null;
 }
 
 /**
@@ -89,6 +161,25 @@ export function getDockerContextByName(containerName: string): DockerContext | n
 }
 
 /**
+ * 動態加入容器配置
+ */
+async function addDynamicContainer(context: DockerContext): Promise<void> {
+  const dynamicKey = `dynamic_${context.containerId}`;
+  
+  // @ts-ignore - 動態添加配置
+  DOCKER_CONTEXTS[dynamicKey] = {
+    containerId: context.containerId,
+    containerName: context.containerName,
+    workingDirectory: context.workingDirectory,
+    status: context.status,
+    projectName: context.containerName.replace(/^ai-web-ide-|-\d+$/g, ''),
+    hasPackageJson: true // 預設為 true
+  };
+  
+  console.log(`📦 已動態加入容器配置: ${context.containerId} (${context.containerName})`);
+}
+
+/**
  * 獲取所有可用的 Docker 上下文
  */
 export function getAllDockerContexts(): DockerContext[] {
@@ -101,11 +192,11 @@ export function getAllDockerContexts(): DockerContext[] {
 }
 
 /**
- * 創建預設的 Docker 上下文（使用最新的容器）
+ * 創建預設的 Docker 上下文（優先使用當前容器）
  */
 export function createDefaultDockerContext(): DockerContext {
-  // 優先使用 webTest 容器，因為它是最新的
-  const defaultContext = DOCKER_CONTEXTS.webTest;
+  // 優先使用當前容器
+  const defaultContext = DOCKER_CONTEXTS.currentWebTest;
   
   return {
     containerId: defaultContext.containerId,
@@ -116,9 +207,9 @@ export function createDefaultDockerContext(): DockerContext {
 }
 
 /**
- * 驗證 Docker 上下文是否有效
+ * 增強的 Docker 上下文驗證
  */
-export function validateDockerContext(context: DockerContext): boolean {
+export async function validateDockerContext(context: DockerContext): Promise<boolean> {
   // 檢查基本字段
   if (!context.containerId || !context.containerName || !context.workingDirectory) {
     return false;
@@ -135,8 +226,77 @@ export function validateDockerContext(context: DockerContext): boolean {
       context.containerId.startsWith('dev-')) {
     return false;
   }
-  
-  return true;
+
+  // 實際檢查容器是否存在且運行中
+  try {
+    const { stdout } = await execAsync(`docker inspect ${context.containerId} --format "{{.State.Status}}"`);
+    const status = stdout.trim();
+    
+    if (status === 'running') {
+      return true;
+    } else {
+      console.warn(`⚠️ 容器 ${context.containerId} 狀態為: ${status}`);
+      return false;
+    }
+  } catch (error) {
+    console.warn(`⚠️ 無法檢查容器 ${context.containerId} 狀態:`, error);
+    return false;
+  }
+}
+
+/**
+ * 自動診斷和修復 Docker 連接問題
+ */
+export async function autoFixDockerConnection(problemContainerId?: string): Promise<{
+  success: boolean;
+  message: string;
+  suggestedContext?: DockerContext;
+}> {
+  try {
+    console.log('🔧 開始自動診斷 Docker 連接問題...');
+    
+    // 1. 刷新容器狀態
+    await refreshDockerContexts();
+    
+    // 2. 如果指定了問題容器，嘗試修復
+    if (problemContainerId) {
+      const context = await getDockerContextById(problemContainerId);
+      if (context) {
+        const isValid = await validateDockerContext(context);
+        if (isValid) {
+          return {
+            success: true,
+            message: `✅ 容器 ${problemContainerId} 連接已修復`,
+            suggestedContext: context
+          };
+        }
+      }
+    }
+    
+    // 3. 找到最佳可用容器
+    const allContexts = getAllDockerContexts();
+    for (const context of allContexts) {
+      const isValid = await validateDockerContext(context);
+      if (isValid) {
+        return {
+          success: true,
+          message: `✅ 已切換到可用容器: ${context.containerId}`,
+          suggestedContext: context
+        };
+      }
+    }
+    
+    return {
+      success: false,
+      message: '❌ 未找到可用的 Docker 容器'
+    };
+    
+  } catch (error) {
+    return {
+      success: false,
+      message: `❌ 自動修復失敗: ${error}`
+    };
+  }
 }
 
 /**
@@ -153,4 +313,13 @@ export const DOCKER_CONTEXT_SUMMARY = {
   }))
 };
 
-console.log('🐳 Docker 上下文配置已載入:', DOCKER_CONTEXT_SUMMARY); 
+// 啟動時自動刷新容器狀態
+refreshDockerContexts().then(() => {
+  console.log('🐳 Docker 上下文配置已載入:', DOCKER_CONTEXT_SUMMARY);
+});
+
+/**
+ * 創建並導出 dockerConfigManager 實例
+ */
+import { DockerConfigManager } from './config-manager';
+export const dockerConfigManager = DockerConfigManager.getInstance(); 

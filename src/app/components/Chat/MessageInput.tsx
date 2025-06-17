@@ -33,7 +33,25 @@ export function MessageInput({ onSendMessage, disabled = false }: MessageInputPr
       }
     } catch (error) {
       console.error('發送訊息時發生錯誤:', error);
-      // 如果發送失敗，可以考慮將訊息恢復到輸入框
+      
+      // 提供更詳細的錯誤提示
+      let errorMessage = '發送訊息時發生錯誤';
+      if (error instanceof Error) {
+        if (error.message.includes('API Token')) {
+          errorMessage = '請檢查 API Token 設定';
+        } else if (error.message.includes('網路')) {
+          errorMessage = '網路連線問題，請檢查網路狀態';
+        } else if (error.message.includes('500')) {
+          errorMessage = '伺服器錯誤，請稍後重試';
+        } else {
+          errorMessage = `錯誤: ${error.message}`;
+        }
+      }
+      
+      // 顯示錯誤提示（這裡可以添加 toast 通知）
+      alert(errorMessage);
+      
+      // 如果發送失敗，將訊息恢復到輸入框
       setMessage(messageToSend);
     } finally {
       setIsLoading(false);

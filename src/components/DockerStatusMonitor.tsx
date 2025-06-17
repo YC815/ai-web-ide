@@ -18,7 +18,7 @@ interface DockerStatusMonitorProps {
 
 export function DockerStatusMonitor({
   containers: propContainers,
-  refreshInterval = 10000, // 10秒，減少頻率避免洗版
+  refreshInterval = 30000, // 30秒，減少頻率避免洗版
   autoRefresh = true
 }: DockerStatusMonitorProps) {
   const [containers, setContainers] = useState<ContainerInfo[]>(propContainers || []);
@@ -26,6 +26,13 @@ export function DockerStatusMonitor({
   const [isLoading, setIsLoading] = useState(true);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [startingContainers, setStartingContainers] = useState<Set<string>>(new Set());
+  const [isClient, setIsClient] = useState(false);
+  const [isPaused, setIsPaused] = useState(false); // 新增：暫停自動刷新控制
+
+  // 確保這是客戶端渲染
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
 
   // 獲取動態容器列表
   const fetchContainerList = useCallback(async () => {
@@ -108,11 +115,11 @@ export function DockerStatusMonitor({
   useEffect(() => {
     refreshStatuses();
 
-    if (autoRefresh) {
+    if (autoRefresh && !isPaused) {
       const interval = setInterval(refreshStatuses, refreshInterval);
       return () => clearInterval(interval);
     }
-  }, [refreshStatuses, autoRefresh, refreshInterval]);
+  }, [refreshStatuses, autoRefresh, refreshInterval, isPaused]);
 
   // 自動啟動開發服務器
   const handleAutoStartDevServer = useCallback(async (containerName: string) => {
@@ -200,6 +207,24 @@ export function DockerStatusMonitor({
     }
   };
 
+  // 防止 hydration mismatch，在客戶端渲染之前顯示簡單內容
+  if (!isClient) {
+    return (
+      <div className="bg-white rounded-lg shadow-sm border p-4">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-lg font-semibold text-gray-900">
+            Docker 容器狀態監控
+          </h3>
+          <div className="text-sm text-gray-500">載入中...</div>
+        </div>
+        <div className="text-center py-8">
+          <div className="text-2xl mb-2">🔄</div>
+          <p className="text-gray-600">正在初始化監控系統...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="bg-white rounded-lg shadow-sm border p-4">
       <div className="flex justify-between items-center mb-4">
@@ -212,12 +237,24 @@ export function DockerStatusMonitor({
               上次更新: {lastUpdate.toLocaleTimeString()}
             </span>
           )}
+          {autoRefresh && (
+            <button
+              onClick={() => setIsPaused(!isPaused)}
+              className={`px-3 py-1 text-sm rounded transition-colors ${
+                isPaused 
+                  ? 'bg-yellow-500 hover:bg-yellow-600 text-white' 
+                  : 'bg-green-500 hover:bg-green-600 text-white'
+              }`}
+            >
+              {isPaused ? '▶️ 恢復' : '⏸️ 暫停'}
+            </button>
+          )}
           <button
             onClick={refreshStatuses}
             disabled={isLoading}
             className="px-3 py-1 bg-blue-500 text-white rounded text-sm hover:bg-blue-600 disabled:opacity-50"
           >
-            {isLoading ? '更新中...' : '刷新'}
+            {isLoading ? '更新中...' : '🔄 刷新'}
           </button>
         </div>
       </div>
@@ -306,7 +343,11 @@ export function DockerStatusMonitor({
         {autoRefresh && (
           <div className="mt-4 text-center">
             <p className="text-xs text-gray-500">
-              🔄 每 {refreshInterval / 1000} 秒自動刷新
+              {isPaused ? (
+                <>⏸️ 自動刷新已暫停 - 每 {refreshInterval / 1000} 秒</>
+              ) : (
+                <>🔄 每 {refreshInterval / 1000} 秒自動刷新</>
+              )}
             </p>
           </div>
         )}

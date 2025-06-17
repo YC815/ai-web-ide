@@ -708,16 +708,50 @@ export class DockerFileSystemTool {
     try {
       const { recursive = false, showHidden = false, useTree = false } = options || {};
       
+      // 驗證路徑安全性
+      const safeDirPath = this.sanitizePath(dirPath);
+      
       let command: string[];
       
       if (useTree) {
-        // 使用tree命令顯示樹狀結構
-        command = ['sh', '-c', `cd ${dirPath} && tree ${recursive ? '' : '-L 1'} ${showHidden ? '-a' : ''} || (echo "tree command not found, installing..." && apk add --no-cache tree && tree ${recursive ? '' : '-L 1'} ${showHidden ? '-a' : ''})`];
+        // 使用tree命令顯示樹狀結構，並處理不同的Linux發行版
+        const treeArgs = [];
+        if (!recursive) treeArgs.push('-L', '2'); // 限制深度為2層
+        if (showHidden) treeArgs.push('-a');
+        
+        command = ['bash', '-c', 
+          `cd "${safeDirPath}" && (` +
+          `tree ${treeArgs.join(' ')} || ` +
+          `(command -v apt-get >/dev/null 2>&1 && apt-get update && apt-get install -y tree && tree ${treeArgs.join(' ')}) || ` +
+          `(command -v apk >/dev/null 2>&1 && apk add --no-cache tree && tree ${treeArgs.join(' ')}) || ` +
+          `(command -v yum >/dev/null 2>&1 && yum install -y tree && tree ${treeArgs.join(' ')}) || ` +
+          `echo "無法安裝 tree 命令，請使用標準 ls 列出"` +
+          `)`
+        ];
       } else {
-        // 使用ls命令
-        const lsArgs = ['-la'];
-        if (recursive) lsArgs.push('-R');
-        command = ['ls', ...lsArgs, dirPath];
+        // 使用ls命令，但限制遞迴深度
+        if (recursive) {
+          // 限制遞迴深度並排除常見的大型目錄
+          const excludePatterns = [
+            'node_modules', 
+            '.git', 
+            '.next', 
+            'dist', 
+            'build',
+            'coverage',
+            '.vscode',
+            '.idea'
+          ].map(pattern => `! -path "*/${pattern}/*"`).join(' ');
+          
+          command = ['bash', '-c', 
+            `cd "${safeDirPath}" && find . -maxdepth 3 ${excludePatterns} -type f -o -type d | head -500 | sort`
+          ];
+        } else {
+          // 非遞迴列出
+          const lsArgs = ['-la'];
+          if (showHidden) lsArgs.push('-A'); // 顯示隱藏檔案但不顯示 . 和 ..
+          command = ['ls', ...lsArgs, safeDirPath];
+        }
       }
 
       const result = await this.executeInContainer(command);
@@ -732,10 +766,25 @@ export class DockerFileSystemTool {
       const output = result.containerOutput || '';
       const files = output.split('\n').filter(line => line.trim());
 
+      // 如果輸出過多，截斷並提供建議
+      if (files.length > 1000) {
+        const truncatedFiles = files.slice(0, 1000);
+        truncatedFiles.push('');
+        truncatedFiles.push('⚠️  輸出已截斷（超過1000行）');
+        truncatedFiles.push('💡 建議：使用更具體的路徑或 tree 命令限制深度');
+        
+        return {
+          success: true,
+          data: truncatedFiles,
+          message: `列出容器內目錄: ${safeDirPath} (已截斷)`,
+          containerOutput: result.containerOutput
+        };
+      }
+
       return {
         success: true,
         data: files,
-        message: `成功列出容器內目錄: ${dirPath}`,
+        message: `成功列出容器內目錄: ${safeDirPath}`,
         containerOutput: result.containerOutput
       };
     } catch (error) {
@@ -747,22 +796,69 @@ export class DockerFileSystemTool {
   }
 
   /**
-   * 使用tree命令顯示Docker容器內目錄樹狀結構
+   * 路徑安全化處理
+   */
+  private sanitizePath(path: string): string {
+    // 移除危險字符和路徑遍歷
+    let safePath = path
+      .replace(/\.\./g, '') // 移除 ..
+      .replace(/[;&|`$()]/g, '') // 移除shell特殊字符
+      .trim();
+    
+    // 如果路徑為空或只是 .，使用當前目錄
+    if (!safePath || safePath === '.') {
+      return '.';
+    }
+    
+    // 確保路徑不以 / 開頭（相對路徑）
+    if (safePath.startsWith('/')) {
+      safePath = '.' + safePath;
+    }
+    
+    return safePath;
+  }
+
+  /**
+   * 使用tree命令顯示Docker容器內目錄樹狀結構 - 修復版本
    */
   async showDirectoryTree(dirPath: string = '.', maxDepth?: number): Promise<DockerToolResponse<string>> {
     try {
-      const depthArg = maxDepth ? `-L ${maxDepth}` : '';
+      // 驗證路徑安全性
+      const safeDirPath = this.sanitizePath(dirPath);
+      
+      // 限制最大深度，防止輸出過大
+      const safeMaxDepth = maxDepth ? Math.min(maxDepth, 5) : 3;
+      const depthArg = `-L ${safeMaxDepth}`;
+      
       const command = [
-        'sh', '-c', 
-        `cd ${dirPath} && (tree ${depthArg} || (echo "Installing tree..." && apk add --no-cache tree && tree ${depthArg}))`
+        'bash', '-c', 
+        `cd "${safeDirPath}" && (` +
+        `tree ${depthArg} -F --dirsfirst || ` +
+        `(command -v apt-get >/dev/null 2>&1 && apt-get update && apt-get install -y tree && tree ${depthArg} -F --dirsfirst) || ` +
+        `(command -v apk >/dev/null 2>&1 && apk add --no-cache tree && tree ${depthArg} -F --dirsfirst) || ` +
+        `(command -v yum >/dev/null 2>&1 && yum install -y tree && tree ${depthArg} -F --dirsfirst) || ` +
+        `(echo "無法安裝 tree 命令，使用 find 替代:" && find . -maxdepth ${safeMaxDepth} -type d | head -100 | sort)` +
+        `)`
       ];
 
       const result = await this.executeInContainer(command);
 
+      // 檢查輸出大小並截斷如果需要
+      let output = result.containerOutput || '';
+      const lines = output.split('\n');
+      
+      if (lines.length > 500) {
+        const truncatedLines = lines.slice(0, 500);
+        truncatedLines.push('');
+        truncatedLines.push('⚠️  輸出已截斷（超過500行）');
+        truncatedLines.push(`💡 建議：使用更小的深度（當前: ${safeMaxDepth}）或更具體的路徑`);
+        output = truncatedLines.join('\n');
+      }
+
       return {
         success: result.success,
-        data: result.containerOutput || '',
-        message: result.success ? `成功顯示容器內目錄樹: ${dirPath}` : '顯示目錄樹失敗',
+        data: output,
+        message: result.success ? `成功顯示容器內目錄樹: ${safeDirPath} (深度: ${safeMaxDepth})` : '顯示目錄樹失敗',
         error: result.error,
         containerOutput: result.containerOutput
       };
