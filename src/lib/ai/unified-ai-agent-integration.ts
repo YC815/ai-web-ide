@@ -201,9 +201,15 @@ export class UnifiedAIAgentIntegrator {
       session.tokenCount += this.estimateTokens(userMessage);
 
       const startTime = Date.now();
+      
+      // 獲取工具列表和描述
+      const toolNames = session.availableTools.map(tool => tool.name).join(", ");
+      
       const result = await session.agent.invoke({
         input: userMessage,
-        chat_history: await session.memory.chatHistory.getMessages()
+        chat_history: await session.memory.chatHistory.getMessages(),
+        tool_names: toolNames,
+        agent_scratchpad: ""
       });
 
       const toolCalls = (result.intermediateSteps || []).map((step: any, index: number) => ({

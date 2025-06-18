@@ -115,6 +115,19 @@ export function selectToolsForRequest(userMessage: string): DynamicTool[] {
     selectedTools.push(...(toolsByCategory.filesystem || []));
   }
   
+  // 🔧 Diff 工具關鍵字檢測
+  if (message.includes('diff') || message.includes('patch') || message.includes('修改') || 
+      message.includes('apply') || message.includes('變更') || message.includes('更新')) {
+    // 優先選擇安全的 Docker diff 工具
+    const diffTools = (toolsByCategory.utility || []).filter(tool => 
+      tool.id.includes('diff') || tool.schema.name.includes('diff')
+    );
+    selectedTools.push(...diffTools);
+    
+    // 如果涉及 diff，也需要 Docker 工具
+    selectedTools.push(...(toolsByCategory.docker || []));
+  }
+  
   if (message.includes('專案') || message.includes('project') || message.includes('初始化')) {
     selectedTools.push(...(toolsByCategory.project || []));
   }
@@ -129,6 +142,15 @@ export function selectToolsForRequest(userMessage: string): DynamicTool[] {
   
   if (message.includes('網路') || message.includes('http') || message.includes('api')) {
     selectedTools.push(...(toolsByCategory.network || []));
+  }
+  
+  // 🔒 安全相關工具檢測
+  if (message.includes('安全') || message.includes('security') || message.includes('驗證')) {
+    const securityTools = (toolsByCategory.utility || []).filter(tool => 
+      tool.id.includes('security') || tool.schema.description.includes('安全') ||
+      tool.schema.description.includes('🔒')
+    );
+    selectedTools.push(...securityTools);
   }
 
   // 如果沒有匹配到特定工具，返回核心工具集

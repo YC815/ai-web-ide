@@ -1,5 +1,7 @@
 # 專案計劃
 
+把 call tool 紀錄以及 call tool 思考過程也記錄在 db
+
 ## Note
 
 - 專案的細節可以在 `doc/pj_info.md` 看到

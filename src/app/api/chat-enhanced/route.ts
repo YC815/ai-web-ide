@@ -5,6 +5,33 @@ import { chatContextManager, ChatResponse } from '@/lib/chat/chat-context-manage
 import { createLangchainChatEngine } from '@/lib/ai/langchain-chat-engine';
 import { ProjectContext } from '@/lib/ai/context-manager';
 
+// 工具調用記錄介面
+export interface ToolCallRecord {
+  id: string;
+  roomId: string;
+  messageId: string;
+  toolName: string;
+  input: Record<string, unknown>;
+  output: Record<string, unknown>;
+  success: boolean;
+  duration: number;
+  timestamp: string;
+  errorMessage?: string;
+}
+
+// 思考過程記錄介面
+export interface ThoughtProcessRecord {
+  id: string;
+  roomId: string;
+  messageId: string;
+  reasoning: string;
+  decision: 'continue_tools' | 'respond_to_user' | 'need_input';
+  confidence: number;
+  contextUsed: string[];
+  decisionFactors: string[];
+  timestamp: string;
+}
+
 // 請求介面
 export interface EnhancedChatRequest {
   message?: string; // 對於創建房間操作，message 是可選的
@@ -33,6 +60,8 @@ export interface EnhancedChatResponse {
     cost?: number;
     toolCallsExecuted?: number;
     contextUsed: string; // 使用的上下文內容
+    toolCalls?: ToolCallRecord[]; // 工具調用記錄
+    thoughtProcess?: ThoughtProcessRecord; // 思考過程記錄
     stats?: {
       totalCalls: number;
       successfulCalls: number;
@@ -76,6 +105,85 @@ function generateId(prefix: string): string {
 }
 
 /**
+ * 記錄工具調用到資料庫
+ */
+async function recordToolCalls(
+  roomId: string, 
+  messageId: string, 
+  toolCalls: Array<Record<string, unknown>>
+): Promise<ToolCallRecord[]> {
+  const records: ToolCallRecord[] = [];
+  
+  for (const toolCall of toolCalls || []) {
+    const record: ToolCallRecord = {
+      id: generateId('tool'),
+      roomId,
+      messageId,
+      toolName: toolCall.tool || 'unknown',
+      input: toolCall.input || {},
+      output: toolCall.output || {},
+      success: toolCall.success || false,
+      duration: toolCall.duration || 0,
+      timestamp: new Date().toISOString(),
+      errorMessage: toolCall.error,
+    };
+    
+    // 記錄到上下文管理器
+    await chatContextManager.recordToolUsage(
+      roomId,
+      record.toolName,
+      record.input,
+      {
+        output: record.output,
+        success: record.success,
+        duration: record.duration,
+        errorMessage: record.errorMessage,
+      },
+      record.success
+    );
+    
+    records.push(record);
+    console.log(`🔧 記錄工具調用: ${record.toolName} (${record.success ? '成功' : '失敗'})`);
+  }
+  
+  return records;
+}
+
+/**
+ * 記錄思考過程到資料庫
+ */
+async function recordThoughtProcess(
+  roomId: string,
+  messageId: string,
+  thoughtProcess: Record<string, unknown> | undefined
+): Promise<ThoughtProcessRecord | undefined> {
+  if (!thoughtProcess) return undefined;
+  
+  const record: ThoughtProcessRecord = {
+    id: generateId('thought'),
+    roomId,
+    messageId,
+    reasoning: thoughtProcess.reasoning || '',
+    decision: thoughtProcess.decision || 'respond_to_user',
+    confidence: thoughtProcess.confidence || 0,
+    contextUsed: thoughtProcess.contextUsed || [],
+    decisionFactors: thoughtProcess.decisionFactors || [],
+    timestamp: new Date().toISOString(),
+  };
+  
+  // 記錄到上下文管理器作為特殊的上下文類型
+  await chatContextManager.setProjectContext(
+    roomId,
+    `thought_process_${record.id}`,
+    JSON.stringify(record),
+    24 // 24小時後過期
+  );
+  
+  console.log(`🧠 記錄思考過程: ${record.reasoning.substring(0, 50)}...`);
+  return record;
+}
+
+/**
  * POST - 處理聊天訊息
  */
 export async function POST(request: NextRequest): Promise<NextResponse<EnhancedChatResponse>> {
@@ -89,9 +197,6 @@ export async function POST(request: NextRequest): Promise<NextResponse<EnhancedC
       projectName,
       containerId,
       apiToken,
-      model = 'gpt-4o',
-      temperature = 0.1,
-      maxTokens = 4000,
       contextLength = 10,
     } = body;
 
@@ -138,7 +243,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<EnhancedC
     }
 
     // 確保聊天室存在
-    const chatRoom = await chatContextManager.getOrCreateChatRoom(
+    await chatContextManager.getOrCreateChatRoom(
       currentRoomId,
       projectId,
       projectName,
@@ -157,6 +262,14 @@ export async function POST(request: NextRequest): Promise<NextResponse<EnhancedC
           contextUsed: '新聊天室',
         }
       });
+    }
+
+    // 確保 message 不為 undefined
+    if (!message) {
+      return NextResponse.json({
+        success: false,
+        error: '訊息內容不能為空'
+      }, { status: 400 });
     }
 
     // 添加用戶訊息到資料庫
@@ -196,6 +309,20 @@ export async function POST(request: NextRequest): Promise<NextResponse<EnhancedC
     const executionTime = Date.now() - startTime;
     console.log(`✅ AI 回應完成，執行時間: ${executionTime}ms`);
 
+    // 記錄工具調用
+    const toolCallRecords = await recordToolCalls(
+      currentRoomId,
+      userMessage.id,
+      aiResponse.toolCalls || []
+    );
+
+    // 記錄思考過程
+    const thoughtProcessRecord = await recordThoughtProcess(
+      currentRoomId,
+      userMessage.id,
+      aiResponse.thoughtProcess
+    );
+
     // 準備回應資料
     const responseData: ChatResponse = {
       message: aiResponse.message,
@@ -219,13 +346,18 @@ export async function POST(request: NextRequest): Promise<NextResponse<EnhancedC
     const assistantMessage = await chatContextManager.addAssistantMessage(currentRoomId, responseData);
     console.log(`🤖 AI 回應已儲存: ${assistantMessage.id}`);
 
-    // 記錄工具使用情況
+    // 記錄工具使用情況到總體統計
     if (aiResponse.toolCalls && aiResponse.toolCalls.length > 0) {
       await chatContextManager.recordToolUsage(
         currentRoomId,
-        'langchain_tools',
-        { message: fullMessage },
-        { response: aiResponse.message, toolCalls: aiResponse.toolCalls.length },
+        'langchain_tools_summary',
+        { message: fullMessage, toolCallCount: aiResponse.toolCalls.length },
+        { 
+          response: aiResponse.message, 
+          toolCalls: aiResponse.toolCalls.length,
+          executionTime,
+          thoughtProcess: thoughtProcessRecord ? 'recorded' : 'none'
+        },
         true
       );
     }
@@ -259,6 +391,8 @@ export async function POST(request: NextRequest): Promise<NextResponse<EnhancedC
         cost: responseData.cost,
         toolCallsExecuted: responseData.toolCallsExecuted,
         contextUsed: contextString.substring(0, 500) + (contextString.length > 500 ? '...' : ''),
+        toolCalls: toolCallRecords,
+        thoughtProcess: thoughtProcessRecord,
         stats: responseData.stats,
       }
     });
@@ -281,6 +415,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const { searchParams } = new URL(request.url);
     const roomId = searchParams.get('roomId');
     const projectId = searchParams.get('projectId');
+    const includeAnalytics = searchParams.get('analytics') === 'true';
+    const includeToolCalls = searchParams.get('toolCalls') === 'true';
+    const includeThoughts = searchParams.get('thoughts') === 'true';
 
     if (roomId) {
       // 獲取特定聊天室
@@ -292,14 +429,37 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         }, { status: 404 });
       }
 
+      const responseData: Record<string, unknown> = {
+        room: chatWindow,
+        messageCount: chatWindow.messages.length,
+        totalTokens: chatWindow.totalTokens,
+        totalCost: chatWindow.totalCost,
+      };
+
+      // 如果需要包含工具調用記錄
+      if (includeToolCalls) {
+        const toolCallRecords = await chatContextManager.getToolCallRecords(roomId);
+        responseData.toolCalls = toolCallRecords;
+        console.log(`🔧 獲取工具調用記錄: ${toolCallRecords.length} 條`);
+      }
+
+      // 如果需要包含思考過程記錄
+      if (includeThoughts) {
+        const thoughtRecords = await chatContextManager.getThoughtProcessRecords(roomId);
+        responseData.thoughtProcesses = thoughtRecords;
+        console.log(`🧠 獲取思考過程記錄: ${thoughtRecords.length} 條`);
+      }
+
+      // 如果需要包含完整分析報告
+      if (includeAnalytics) {
+        const analytics = await chatContextManager.getChatRoomAnalytics(roomId);
+        responseData.analytics = analytics;
+        console.log(`📊 獲取聊天室分析報告: ${analytics.toolCallCount} 個工具調用, ${analytics.thoughtProcessCount} 個思考過程`);
+      }
+
       return NextResponse.json({
         success: true,
-        data: {
-          room: chatWindow,
-          messageCount: chatWindow.messages.length,
-          totalTokens: chatWindow.totalTokens,
-          totalCost: chatWindow.totalCost,
-        }
+        data: responseData
       });
     }
 
@@ -308,12 +468,26 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       const chatWindows = await chatContextManager.getChatWindows(projectId);
       const stats = await chatContextManager.getChatStats(projectId);
 
+      const responseData: Record<string, unknown> = {
+        rooms: chatWindows,
+        stats,
+      };
+
+      // 如果需要包含每個聊天室的分析報告
+      if (includeAnalytics) {
+        const roomAnalytics = await Promise.all(
+          chatWindows.map(async (room) => ({
+            roomId: room.id,
+            analytics: await chatContextManager.getChatRoomAnalytics(room.id)
+          }))
+        );
+        responseData.roomAnalytics = roomAnalytics;
+        console.log(`📊 獲取專案分析報告: ${roomAnalytics.length} 個聊天室`);
+      }
+
       return NextResponse.json({
         success: true,
-        data: {
-          rooms: chatWindows,
-          stats,
-        }
+        data: responseData
       });
     }
 

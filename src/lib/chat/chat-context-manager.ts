@@ -333,6 +333,149 @@ export class ChatContextManager {
   }
 
   /**
+   * 獲取工具調用記錄
+   */
+  async getToolCallRecords(roomId: string): Promise<any[]> {
+    const contexts = chatStorage.getAllChatContexts(roomId);
+    const toolRecords = contexts
+      .filter(ctx => ctx.contextType === 'tool_usage')
+      .map(ctx => {
+        try {
+          return JSON.parse(ctx.contextValue);
+        } catch (error) {
+          console.warn(`解析工具記錄失敗: ${ctx.id}`, error);
+          return null;
+        }
+      })
+      .filter(record => record !== null)
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+    return toolRecords;
+  }
+
+  /**
+   * 獲取思考過程記錄
+   */
+  async getThoughtProcessRecords(roomId: string): Promise<any[]> {
+    const contexts = chatStorage.getAllChatContexts(roomId);
+    const thoughtRecords = contexts
+      .filter(ctx => ctx.contextKey.startsWith('thought_process_'))
+      .map(ctx => {
+        try {
+          return JSON.parse(ctx.contextValue);
+        } catch (error) {
+          console.warn(`解析思考過程記錄失敗: ${ctx.id}`, error);
+          return null;
+        }
+      })
+      .filter(record => record !== null)
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+    return thoughtRecords;
+  }
+
+  /**
+   * 獲取特定訊息的工具調用統計
+   */
+  async getMessageToolStats(roomId: string, messageId: string): Promise<{
+    totalToolCalls: number;
+    successfulCalls: number;
+    failedCalls: number;
+    toolTypes: string[];
+    averageDuration: number;
+  }> {
+    const toolRecords = await this.getToolCallRecords(roomId);
+    const messageTools = toolRecords.filter(record => 
+      record.messageId === messageId || 
+      Math.abs(new Date(record.timestamp).getTime() - new Date(messageId).getTime()) < 60000 // 1分鐘內的記錄
+    );
+
+    const stats = {
+      totalToolCalls: messageTools.length,
+      successfulCalls: messageTools.filter(tool => tool.success).length,
+      failedCalls: messageTools.filter(tool => !tool.success).length,
+      toolTypes: [...new Set(messageTools.map(tool => tool.tool))],
+      averageDuration: messageTools.length > 0 
+        ? messageTools.reduce((sum, tool) => sum + (tool.duration || 0), 0) / messageTools.length 
+        : 0
+    };
+
+    return stats;
+  }
+
+  /**
+   * 獲取聊天室的完整分析報告
+   */
+  async getChatRoomAnalytics(roomId: string): Promise<{
+    messageCount: number;
+    toolCallCount: number;
+    thoughtProcessCount: number;
+    mostUsedTools: Array<{ tool: string; count: number }>;
+    successRate: number;
+    averageResponseTime: number;
+    conversationFlow: Array<{
+      timestamp: string;
+      type: 'message' | 'tool_call' | 'thought_process';
+      content: string;
+      success?: boolean;
+    }>;
+  }> {
+    const messages = await this.getChatHistory(roomId, 1000); // 獲取大量歷史
+    const toolRecords = await this.getToolCallRecords(roomId);
+    const thoughtRecords = await this.getThoughtProcessRecords(roomId);
+
+    // 統計工具使用情況
+    const toolUsage = toolRecords.reduce((acc, record) => {
+      acc[record.tool] = (acc[record.tool] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+
+    const mostUsedTools = Object.entries(toolUsage)
+      .map(([tool, count]) => ({ tool, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10);
+
+    // 計算成功率
+    const successfulTools = toolRecords.filter(record => record.success).length;
+    const successRate = toolRecords.length > 0 ? (successfulTools / toolRecords.length) * 100 : 0;
+
+    // 計算平均響應時間
+    const averageResponseTime = toolRecords.length > 0 
+      ? toolRecords.reduce((sum, record) => sum + (record.duration || 0), 0) / toolRecords.length 
+      : 0;
+
+    // 構建對話流程
+    const conversationFlow = [
+      ...messages.map(msg => ({
+        timestamp: msg.timestamp,
+        type: 'message' as const,
+        content: `${msg.role}: ${msg.content.substring(0, 100)}...`,
+      })),
+      ...toolRecords.map(tool => ({
+        timestamp: tool.timestamp,
+        type: 'tool_call' as const,
+        content: `工具調用: ${tool.tool}`,
+        success: tool.success,
+      })),
+      ...thoughtRecords.map(thought => ({
+        timestamp: thought.timestamp,
+        type: 'thought_process' as const,
+        content: `思考: ${thought.reasoning.substring(0, 100)}...`,
+      }))
+    ].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+    return {
+      messageCount: messages.length,
+      toolCallCount: toolRecords.length,
+      thoughtProcessCount: thoughtRecords.length,
+      mostUsedTools,
+      successRate,
+      averageResponseTime,
+      conversationFlow,
+    };
+  }
+
+  /**
    * 刪除聊天室
    */
   async deleteChatRoom(roomId: string): Promise<boolean> {

@@ -45,13 +45,46 @@ export const SYSTEM_PROMPTS = {
 5. 使用繁體中文進行友善的互動
 6. **嚴格遵守工作目錄限制，確保安全性**
 
+**📄 頁面編輯核心原則：**
+🏠 **主頁識別規則**：
+- 當用戶提到「主頁」、「首頁」、「根頁面」時，指的是 \`src/app/page.tsx\`
+- 這是 Next.js App Router 的根頁面檔案
+
+🔧 **編輯工具優先級**：
+1. **優先使用 diff 工具**：\`local_apply_diff\` 或 \`docker_apply_diff\`
+   - 適用於精確的檔案修改
+   - 可以處理複雜的程式碼變更
+   - 提供更好的錯誤處理和回復機制
+
+2. **次要選擇直接編輯**：僅在 diff 工具不適用時使用
+   - 簡單的檔案創建
+   - 全新檔案內容
+
+📋 **頁面管理原則**：
+- **預設在主頁修改**：除非用戶明確要求新建頁面，否則簡單的網頁功能都在 \`src/app/page.tsx\` 中實現
+- **避免不必要的新頁面**：保持專案結構簡潔，減少檔案數量
+- **功能集中化**：將相關功能整合在同一個頁面中，提升用戶體驗
+
+**🗂️ 路徑處理重要說明：**
+- **Docker 容器工作目錄**：\`/app/workspace/<project-name>/\`
+- **主頁檔案位置**：\`src/app/page.tsx\`（相對於專案根目錄）
+- **完整路徑範例**：\`/app/workspace/new_testing/src/app/page.tsx\`
+- **工具調用路徑**：使用相對路徑，如 \`src/app/page.tsx\`，工具會自動處理完整路徑
+
+**🔧 檔案操作路徑規則：**
+1. **讀取檔案**：使用 \`src/app/page.tsx\`（相對路徑）
+2. **創建檔案**：使用 \`src/app/page.tsx\`（相對路徑）  
+3. **搜尋檔案**：使用檔案名 \`page.tsx\` 或相對路徑
+4. **避免使用**：絕對路徑或 \`./\` 開頭的路徑
+
 **決策流程：**
 1. 分析用戶意圖
-2. 驗證操作路徑是否在允許範圍內
-3. 檢查是否需要專案上下文
-4. 選擇適當的工具組合
-5. 執行操作並提供回饋
-6. 根據結果給出下一步建議`,
+2. 確定正確的檔案路徑格式
+3. 驗證操作路徑是否在允許範圍內
+4. 檢查是否需要專案上下文
+5. 選擇適當的工具組合
+6. 執行操作並提供回饋
+7. 根據結果給出下一步建議`,
 
   // 工具選擇指南
   TOOL_SELECTION_GUIDE: `**工具選擇決策樹：**
@@ -65,11 +98,15 @@ export const SYSTEM_PROMPTS = {
    └─ → 使用 AIContextManager.getProjectSnapshot()
 
 2️⃣ **需要檔案操作嗎？**
-   ├─ 「創建」、「建立」、「新增」→ FileSystemTool.createFile()
-   ├─ 「修改」、「編輯」、「更新」→ FileSystemTool.writeFile()
-   ├─ 「刪除」、「移除」→ FileSystemTool.deleteFile()
-   ├─ 「讀取」、「查看」→ FileSystemTool.readFile()
-   └─ 「列出」、「顯示」→ FileSystemTool.listDirectory()
+   ├─ 「主頁」、「首頁」相關 → 操作 \`src/app/page.tsx\`（使用相對路徑）
+   ├─ 「修改」、「編輯」、「更新」→ **優先使用** \`local_apply_diff\` 或 \`docker_apply_diff\`
+   │   └─ 路徑格式：\`src/app/page.tsx\`（不要使用 \`./\` 或絕對路徑）
+   ├─ 「創建」、「建立」、「新增」→ 
+   │   ├─ 簡單網頁功能 → 在主頁 \`src/app/page.tsx\` 中實現
+   │   └─ 複雜功能或明確要求 → 使用相對路徑創建新檔案
+   ├─ 「刪除」、「移除」→ 使用相對路徑刪除檔案
+   ├─ 「讀取」、「查看」→ 使用相對路徑讀取檔案
+   └─ 「列出」、「顯示」→ 使用相對路徑列出目錄
 
 3️⃣ **需要執行命令嗎？**
    ├─ 「安裝」、「install」→ CommandExecutionTool.npmCommand(['install', ...])
@@ -103,11 +140,28 @@ export const SYSTEM_PROMPTS = {
 用戶：「創建一個登入頁面」
 回應流程：
 1. 檢查專案是否已初始化
-2. 分析現有路由結構
-3. 創建頁面檔案 (app/login/page.tsx)
-4. 創建相關組件檔案
+2. **優先考慮在主頁實現**：
+   - 簡單登入功能 → 在 \`src/app/page.tsx\` 中添加登入表單
+- 複雜登入系統 → 創建獨立頁面 \`app/login/page.tsx\`
+3. **使用 diff 工具修改**：優先使用 \`local_apply_diff\` 進行精確修改
+4. 創建相關組件檔案（如需要）
 5. 檢查並安裝必要依賴
 6. 提供預覽和測試建議
+
+🏠 **主頁修改場景**
+用戶：「主頁改成登入畫面」
+回應流程：
+1. **讀取主頁**：使用 \`read_file\` 工具，路徑為 \`src/app/page.tsx\`
+2. **分析內容**：理解當前頁面結構和樣式
+3. **生成 diff**：創建 unified diff 格式的修改內容
+4. **應用修改**：使用 \`local_apply_diff\` 工具，檔案路徑為 \`src/app/page.tsx\`
+5. **驗證結果**：確認修改成功並提供回饋
+
+**📝 路徑使用範例：**
+- ✅ 正確：\`read_file("src/app/page.tsx")\`
+- ✅ 正確：\`local_apply_diff(filePath: "src/app/page.tsx", diffContent: "...")\`
+- ❌ 錯誤：\`read_file("./src/app/page.tsx")\`
+- ❌ 錯誤：\`read_file("/app/workspace/project/src/app/page.tsx")\`
 
 ⚙️ **專案初始化場景**
 用戶：「初始化一個新專案」
@@ -253,7 +307,7 @@ export class PromptGenerator {
 2. 生成專案報告 → generateAIProjectReport() 
 3. 提供智能建議 → getSmartSuggestions()`,
 
-      file_operation: `📁 **檔案操作模式**
+    file_operation: `📁 **檔案操作模式**
 可用工具：
 - 讀取：readFile(path)
 - 創建：createFile(path, content)
@@ -261,14 +315,14 @@ export class PromptGenerator {
 - 刪除：deleteFile(path)
 - 列表：listDirectory(path)`,
 
-      development_task: `🛠️ **開發任務模式**
+    development_task: `🛠️ **開發任務模式**
 建議流程：
 1. 確保專案初始化 → ensureProjectInitialized()
 2. 分析現有結構 → getProjectStructure()
 3. 執行開發操作 → 組合使用各種工具
 4. 驗證結果 → 建置測試`,
 
-      project_management: `⚙️ **專案管理模式**
+    project_management: `⚙️ **專案管理模式**
 可用操作：
 - 初始化：initializeProject()
 - 狀態檢查：getProjectStatus()
@@ -303,7 +357,7 @@ export const PROMPT_USAGE_EXAMPLES = `
 
 ## 基本使用流程
 
-\`\`\`typescript
+\\\`\\\`\\\`typescript
 // 1. 設置系統提示詞
 const systemPrompt = SYSTEM_PROMPTS.MAIN_SYSTEM;
 
@@ -320,8 +374,8 @@ const fullPrompt = \`\${systemPrompt}
 
 \${guidancePrompt}
 
-用戶請求：\${userMessage}\`;
-\`\`\`
+用戶請求：\\\${userMessage}\\\`;
+\\\`\\\`\\\`
 
 ## 智能決策示例
 

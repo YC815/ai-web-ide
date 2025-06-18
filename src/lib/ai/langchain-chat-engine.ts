@@ -6,15 +6,11 @@
 // 遷移指南：docs/unified-function-call-system.md
 
 import { ChatOpenAI } from "@langchain/openai";
-import { ConversationalRetrievalQAChain } from "langchain/chains";
 import { BufferMemory } from "langchain/memory";
-import { ConversationBufferWindowMemory } from "langchain/memory";
 import { 
   AgentExecutor, 
-  createReactAgent,
   createStructuredChatAgent
 } from "langchain/agents";
-import { pull } from "langchain/hub";
 import { 
   RunnableSequence, 
   RunnablePassthrough,
@@ -23,12 +19,6 @@ import {
 import {
   ChatPromptTemplate
 } from "@langchain/core/prompts";
-import { 
-  BaseMessage, 
-  HumanMessage, 
-  AIMessage, 
-  SystemMessage 
-} from "@langchain/core/messages";
 import { DynamicTool, Tool } from "@langchain/core/tools";
 import { StringOutputParser } from "@langchain/core/output_parsers";
 import { MemoryVectorStore } from "langchain/vectorstores/memory";
@@ -36,8 +26,8 @@ import { OpenAIEmbeddings } from "@langchain/openai";
 import { Document } from "@langchain/core/documents";
 
 // 引入現有的工具和上下文管理
-import { createAIContextManager, ProjectContext, ProjectSnapshot } from './context-manager';
-import { createDockerToolkit, DockerToolkit, createDefaultDockerContext } from '../docker/tools';
+import { createAIContextManager, ProjectContext } from './context-manager';
+import { createDockerToolkit, createDefaultDockerContext } from '../docker/tools';
 import { DockerSecurityValidator } from './docker-security-validator';
 
 // 統一 Function Call 系統整合
@@ -455,7 +445,7 @@ export class LangchainChatEngine {
     confidence: number;
   }> {
     const decisionPrompt = ChatPromptTemplate.fromMessages([
-      ["system", `你是一個智能決策助手。分析用戶請求並決定最佳行動方案。
+      ["system", `你是一個全自動程式設計師的決策引擎。你的使命是最大化工具使用，最小化純文字回應。
 
         當前狀況:
         - 重試次數: {retryCount}/3
@@ -463,17 +453,37 @@ export class LangchainChatEngine {
         - 專案上下文: {projectContext}
         
         決策選項:
-        1. continue_tools: 需要使用工具來完成任務
-        2. respond_to_user: 可以直接回應，不需要工具
-        3. need_input: 需要更多用戶資訊才能繼續
+        1. continue_tools: 使用工具來完成任務（**強烈優先**）
+        2. respond_to_user: 直接回應（僅限任務已完全完成）
+        3. need_input: 需要更多資訊（極少使用）
+        
+        **決策優先級**（按重要性排序）:
+        1. **檔案編輯需求** → continue_tools（修改、創建、更新檔案）
+        2. **專案探索需求** → continue_tools（查看、分析、探索專案）
+        3. **檔案搜尋需求** → continue_tools（查找、顯示特定檔案）
+        4. **技術實現需求** → continue_tools（添加功能、修復錯誤）
+        5. **已完成任務** → respond_to_user（僅當工具已執行完成）
+        
+        **強制使用工具的關鍵詞**:
+        - 修改、改成、更改、編輯、調整、優化
+        - 創建、添加、新增、加入
+        - 查看、看看、顯示、探索、分析
+        - 主頁、檔案、專案、結構
+        - 把...改成、讓...變成、將...修改為
+        
+        **判斷規則**:
+        - 🎯 **預設選擇 continue_tools** - 除非任務已100%完成
+        - ✅ 只有在工具已成功執行且任務完全完成時才選 respond_to_user
+        - 🔄 錯誤或失敗時必須選 continue_tools 重試
+        - ❌ 絕不因為"可能需要用戶確認"而選 respond_to_user
         
         請提供:
-        1. reasoning: 詳細的推理過程
-        2. decision: 選擇的決策 (continue_tools/respond_to_user/need_input)
+        1. reasoning: 分析用戶需求類型和所需工具
+        2. decision: 決策（強烈傾向 continue_tools）
         3. confidence: 信心度 (0-1)
         
         以 JSON 格式回應。`],
-      ["human", "用戶請求: {userMessage}"]
+      ["human", "用戶需求: {userMessage}\n\n分析是否需要使用工具來完成這個需求。傾向於使用工具而不是純文字回應。"]
     ]);
 
     const decisionChain = decisionPrompt.pipe(this.model).pipe(new StringOutputParser());
@@ -515,9 +525,18 @@ export class LangchainChatEngine {
   }> {
     try {
       const startTime = Date.now();
+      
+      // 獲取 session 中已有的工具列表和描述
+      const agentTools = session.agent.tools || [];
+      const toolNames = agentTools.map(tool => tool.name).join(", ");
+      const toolDescriptions = agentTools.map(tool => `${tool.name}: ${tool.description || ''}`).join("\n");
+      
       const result = await session.agent.invoke({
         input: userMessage,
-        chat_history: await session.memory.chatHistory.getMessages()
+        chat_history: await session.memory.chatHistory.getMessages(),
+        tool_names: toolNames,
+        tools: toolDescriptions,
+        agent_scratchpad: ""
       });
 
       // 將 intermediateSteps 轉換為 ToolCallResult
@@ -554,16 +573,39 @@ export class LangchainChatEngine {
    * 判斷是否需要繼續使用工具
    */
   private async shouldContinueWithTools(session: ChatSession, output: string): Promise<boolean> {
-    // 簡單的啟發式規則 - 可以用更複雜的 LLM 判斷
-    const continueKeywords = ['錯誤', '失敗', '無法', '需要', '問題'];
-    const completeKeywords = ['完成', '成功', '建立', '創建', '已經'];
+    // 檢查明確的完成信號
+    const completeKeywords = ['✅', '成功', '完成', '建立', '創建', '已經', '修改完成', '檔案創建成功'];
+    const continueKeywords = ['❌', '錯誤', '失敗', '無法', '需要', '問題', '重試'];
     
     const lowerOutput = output.toLowerCase();
     
-    const hasContinueSignal = continueKeywords.some(keyword => lowerOutput.includes(keyword));
-    const hasCompleteSignal = completeKeywords.some(keyword => lowerOutput.includes(keyword));
+    // 如果輸出包含成功標記，則認為任務完成
+    const hasCompleteSignal = completeKeywords.some(keyword => 
+      lowerOutput.includes(keyword.toLowerCase()) || output.includes(keyword)
+    );
     
-    return hasContinueSignal && !hasCompleteSignal;
+    // 如果輸出包含錯誤標記，則需要繼續
+    const hasContinueSignal = continueKeywords.some(keyword => 
+      lowerOutput.includes(keyword.toLowerCase()) || output.includes(keyword)
+    );
+    
+    // 特別檢查檔案操作成功的情況
+    if (output.includes('檔案') && (output.includes('創建成功') || output.includes('修改成功'))) {
+      return false; // 檔案操作成功，不需要繼續
+    }
+    
+    // 如果有明確的完成信號且沒有錯誤信號，則停止
+    if (hasCompleteSignal && !hasContinueSignal) {
+      return false;
+    }
+    
+    // 如果有錯誤信號，則繼續
+    if (hasContinueSignal) {
+      return true;
+    }
+    
+    // 預設情況下，如果沒有明確信號，則不繼續（避免無限循環）
+    return false;
   }
 
   /**
@@ -615,12 +657,17 @@ export class LangchainChatEngine {
       // 創建專案路徑檢測工具 - 優先級最高
       new DynamicTool({
         name: "detect_project_path",
-        description: `自動檢測當前專案的根目錄路徑。
+        description: `自動檢測當前專案的根目錄路徑（僅限 Docker 容器內）。
+        
+        🔒 **安全限制**：
+        - 僅在 Docker 容器內部執行
+        - 路徑限制在 /app/workspace/ 專案工作區內
+        - 禁止訪問宿主機檔案系統
         
         這個工具會：
-        1. 搜尋包含 package.json 的目錄
-        2. 確定正確的專案根路徑
-        3. 返回專案基本資訊
+        1. 在 Docker 容器內搜尋包含 package.json 的目錄
+        2. 確定正確的專案根路徑（僅限 /app/workspace/ 內）
+        3. 返回專案基本資訊和 Docker 容器狀態
         
         使用時機：
         - 當用戶詢問專案結構時
@@ -628,7 +675,47 @@ export class LangchainChatEngine {
         - 開始任何專案操作前`,
         func: async () => {
           try {
+            // 1. 驗證 Docker 上下文
+            const dockerValidation = this.securityValidator.validateDockerContext(dockerContext, normalizedProjectName);
+            if (!dockerValidation.isValid) {
+              return JSON.stringify({
+                success: false,
+                error: `Docker 安全驗證失敗: ${dockerValidation.reason}`,
+                dockerContext: {
+                  containerId: dockerContext.containerId,
+                  containerName: dockerContext.containerName,
+                  workingDirectory: dockerContext.workingDirectory,
+                  status: dockerContext.status
+                },
+                message: `❌ 專案路徑檢測失敗：無法驗證 Docker 容器上下文`
+              }, null, 2);
+            }
+
+            // 2. 檢測專案路徑（僅限容器內）
             const projectPath = await this.detectProjectPath(toolkit);
+            
+            // 3. 驗證專案路徑在安全範圍內
+            const pathValidation = this.securityValidator.validateFilePath(
+              projectPath + '/package.json',
+              dockerContext,
+              normalizedProjectName
+            );
+            if (!pathValidation.isValid) {
+              return JSON.stringify({
+                success: false,
+                error: `專案路徑安全驗證失敗: ${pathValidation.reason}`,
+                suggestedPath: pathValidation.suggestedPath,
+                dockerContext: {
+                  containerId: dockerContext.containerId,
+                  containerName: dockerContext.containerName,
+                  workingDirectory: dockerContext.workingDirectory,
+                  status: dockerContext.status
+                },
+                message: `❌ 專案路徑檢測失敗：路徑不在安全範圍內`
+              }, null, 2);
+            }
+
+            // 4. 獲取專案資訊
             const projectInfo = await this.getProjectInfo(toolkit, projectPath);
             
             return JSON.stringify({
@@ -638,9 +725,16 @@ export class LangchainChatEngine {
               dockerContext: {
                 containerId: dockerContext.containerId,
                 containerName: dockerContext.containerName,
-                workingDirectory: dockerContext.workingDirectory
+                workingDirectory: dockerContext.workingDirectory,
+                status: dockerContext.status
               },
-              message: `✅ 專案路徑檢測完成\n路徑: ${projectPath}\n名稱: ${projectInfo.name}\n版本: ${projectInfo.version || 'N/A'}`
+              securityValidation: {
+                pathValidated: true,
+                dockerValidated: true,
+                restrictedToContainer: true,
+                workspacePattern: '/app/workspace/*'
+              },
+              message: `✅ 專案路徑檢測完成（Docker 容器內）\n路徑: ${projectPath}\n名稱: ${projectInfo.name}\n版本: ${projectInfo.version || 'N/A'}\n容器: ${dockerContext.containerName || dockerContext.containerId}`
             }, null, 2);
           } catch (error) {
             return JSON.stringify({
@@ -649,7 +743,8 @@ export class LangchainChatEngine {
               dockerContext: {
                 containerId: dockerContext.containerId,
                 containerName: dockerContext.containerName,
-                workingDirectory: dockerContext.workingDirectory
+                workingDirectory: dockerContext.workingDirectory,
+                status: dockerContext.status
               },
               message: `❌ 專案路徑檢測失敗: ${error instanceof Error ? error.message : 'Unknown error'}`
             }, null, 2);
@@ -688,8 +783,18 @@ export class LangchainChatEngine {
       new DynamicTool({
         name: "list_directory",
         description: "列出指定目錄的內容，用於探索檔案結構。路徑相對於專案根目錄。如果路徑為空，將自動檢測專案根目錄。",
-        func: async (path: string) => {
+        func: async (input: string | { path?: string; directory?: string }) => {
           try {
+            // 處理不同的輸入格式
+            let path: string;
+            if (typeof input === 'string') {
+              path = input;
+            } else if (typeof input === 'object' && input !== null) {
+              path = input.path || input.directory || '';
+            } else {
+              path = '';
+            }
+            
             // 如果沒有提供路徑，自動檢測專案根目錄
             let targetPath = path;
             if (!path || path === '.' || path === './') {
@@ -752,31 +857,158 @@ export class LangchainChatEngine {
 
       new DynamicTool({
         name: "create_file",
-        description: "創建新檔案，輸入格式: path|content。路徑相對於專案根目錄",
-        func: async (input: string) => {
-          const [path, content] = input.split('|');
-          if (!path || content === undefined) {
-            return '❌ 輸入格式錯誤，請使用: path|content';
-          }
-          
+        description: `創建新檔案（僅限 Docker 容器內）。
+        
+        🔒 **安全限制**：
+        - 僅在 Docker 容器內部執行
+        - 檔案路徑必須在 /app/workspace/ 專案工作區內
+        - 禁止創建系統檔案或訪問宿主機
+        - 自動進行路徑安全驗證
+        
+        使用方式：
+        - 字串格式：'path|content'，例如 'src/app/page.tsx|檔案內容'
+        - 物件格式：{path: 'src/app/page.tsx', content: '檔案內容'}
+        
+        路徑規則：
+        - 使用相對路徑，如 src/app/page.tsx
+        - 路徑會自動驗證並限制在專案工作區內`,
+        func: async (input: string | { path?: string; content?: string; file_path?: string }) => {
           try {
+            let path: string, content: string;
+            
+            console.log('🔧 create_file 工具接收到輸入:', typeof input, input);
+            
+            // 1. 首先驗證 Docker 上下文
+            const dockerValidation = this.securityValidator.validateDockerContext(dockerContext, normalizedProjectName);
+            if (!dockerValidation.isValid) {
+              return `❌ Docker 安全驗證失敗: ${dockerValidation.reason}`;
+            }
+            
+            // 2. 解析輸入參數
+            if (typeof input === 'string') {
+              const parts = input.split('|');
+              if (parts.length < 2) {
+                return '❌ 字符串格式錯誤，請使用: path|content 格式，例如 "src/app/page.tsx|檔案內容"';
+              }
+              path = parts[0].trim();
+              content = parts.slice(1).join('|'); // 處理內容中可能包含 | 的情況
+            } else if (typeof input === 'object' && input !== null) {
+              path = input.path || input.file_path || '';
+              content = input.content || '';
+              if (!path) {
+                return '❌ 物件格式錯誤，缺少 path 屬性。範例：{path: "src/app/page.tsx", content: "檔案內容"}';
+              }
+              if (content === undefined || content === null) {
+                content = ''; // 允許空內容
+              }
+            } else {
+              return '❌ 無效的輸入格式。請使用字串 "path|content" 或物件 {path: "...", content: "..."}';
+            }
+            
+            if (!path) {
+              return '❌ 檔案路徑不能為空';
+            }
+            
+            // 3. 驗證檔案路徑安全性
+            const pathValidation = this.securityValidator.validateFilePath(
+              path,
+              dockerContext,
+              normalizedProjectName
+            );
+            if (!pathValidation.isValid) {
+              const suggestion = pathValidation.suggestedPath 
+                ? `\n💡 建議使用: ${pathValidation.suggestedPath}` 
+                : '';
+              return `❌ 檔案路徑安全驗證失敗: ${pathValidation.reason}${suggestion}`;
+            }
+            
+            console.log(`📁 準備在 Docker 容器內創建檔案: ${path}, 內容長度: ${content.length}`);
+            
+            // 4. 在 Docker 容器內創建檔案
             const result = await toolkit.fileSystem.writeFile(path, content);
-            return result.success ? `✅ 檔案 ${path} 創建成功` : `❌ 創建檔案失敗: ${result.error}`;
+            
+            if (result.success) {
+              console.log(`✅ 成功在 Docker 容器內創建檔案: ${path}`);
+              return `✅ 檔案 ${path} 在 Docker 容器內創建成功\n📦 容器: ${dockerContext.containerName || dockerContext.containerId}\n📝 內容長度: ${content.length} 字符`;
+            } else {
+              console.log(`❌ 在 Docker 容器內創建檔案失敗: ${result.error}`);
+              return `❌ 在 Docker 容器內創建檔案失敗: ${result.error}`;
+            }
           } catch (error) {
-            return `❌ 創建檔案時出錯: ${error instanceof Error ? error.message : 'Unknown error'}`;
+            return `❌ 在 Docker 容器內創建檔案時出錯: ${error instanceof Error ? error.message : 'Unknown error'}`;
           }
         }
       }),
 
       new DynamicTool({
         name: "read_file",
-        description: "讀取檔案內容。路徑相對於專案根目錄",
-        func: async (path: string) => {
+        description: `讀取檔案內容（僅限 Docker 容器內）。
+        
+        🔒 **安全限制**：
+        - 僅在 Docker 容器內部執行
+        - 檔案路徑必須在 /app/workspace/ 專案工作區內
+        - 禁止讀取系統檔案或訪問宿主機
+        - 自動進行路徑安全驗證
+        
+        使用方式：
+        - 直接傳入檔案路徑字串，如 'src/app/page.tsx'
+        - 路徑相對於專案根目錄
+        
+        路徑規則：
+        - 使用相對路徑，如 src/app/page.tsx
+        - 路徑會自動驗證並限制在專案工作區內`,
+        func: async (input: string | { file_path?: string; path?: string }) => {
           try {
+            console.log('📖 read_file 工具接收到輸入:', typeof input, input);
+            
+            // 1. 首先驗證 Docker 上下文
+            const dockerValidation = this.securityValidator.validateDockerContext(dockerContext, normalizedProjectName);
+            if (!dockerValidation.isValid) {
+              return `❌ Docker 安全驗證失敗: ${dockerValidation.reason}`;
+            }
+            
+            // 2. 處理不同的輸入格式
+            let path: string;
+            if (typeof input === 'string') {
+              path = input.trim();
+            } else if (typeof input === 'object' && input !== null) {
+              path = input.file_path || input.path || '';
+            } else {
+              return '❌ 無效的檔案路徑參數。請直接傳入檔案路徑字串，如 "src/app/page.tsx"';
+            }
+            
+            if (!path) {
+              return '❌ 檔案路徑不能為空。請提供檔案路徑，如 "src/app/page.tsx"';
+            }
+            
+            // 3. 驗證檔案路徑安全性
+            const pathValidation = this.securityValidator.validateFilePath(
+              path,
+              dockerContext,
+              normalizedProjectName
+            );
+            if (!pathValidation.isValid) {
+              const suggestion = pathValidation.suggestedPath 
+                ? `\n💡 建議使用: ${pathValidation.suggestedPath}` 
+                : '';
+              return `❌ 檔案路徑安全驗證失敗: ${pathValidation.reason}${suggestion}`;
+            }
+            
+            console.log(`📁 準備從 Docker 容器內讀取檔案: ${path}`);
+            
+            // 4. 從 Docker 容器內讀取檔案
             const result = await toolkit.fileSystem.readFile(path);
-            return result.success ? (result.data || '檔案為空') : `❌ 讀取檔案失敗: ${result.error}`;
+            
+            if (result.success) {
+              console.log(`✅ 成功從 Docker 容器內讀取檔案 ${path}, 內容長度: ${result.data?.length || 0}`);
+              const fileContent = result.data || '檔案為空';
+              return `${fileContent}\n\n📦 來源：Docker 容器 ${dockerContext.containerName || dockerContext.containerId}`;
+            } else {
+              console.log(`❌ 從 Docker 容器內讀取檔案失敗: ${result.error}`);
+              return `❌ 從 Docker 容器內讀取檔案失敗: ${result.error}`;
+            }
           } catch (error) {
-            return `❌ 讀取檔案時出錯: ${error instanceof Error ? error.message : 'Unknown error'}`;
+            return `❌ 從 Docker 容器內讀取檔案時出錯: ${error instanceof Error ? error.message : 'Unknown error'}`;
           }
         }
       }),
@@ -784,7 +1016,16 @@ export class LangchainChatEngine {
       new DynamicTool({
         name: "execute_command",
         description: "在容器中執行命令（功能開發中）",
-        func: async (command: string) => {
+        func: async (input: string | { command?: string; cmd?: string }) => {
+          let command: string;
+          if (typeof input === 'string') {
+            command = input;
+          } else if (typeof input === 'object' && input !== null) {
+            command = input.command || input.cmd || '';
+          } else {
+            command = '';
+          }
+          
           return `⚠️ 命令執行功能暫未實現: ${command}\n\n建議使用其他可用的工具來完成您的任務。`;
         }
       }),
@@ -792,6 +1033,15 @@ export class LangchainChatEngine {
       // 創建智能檔案搜尋工具
       new DynamicTool({
         name: "intelligent_file_search",
+        description: `智能檔案搜尋和自動導航工具（僅限 Docker 容器內）。
+        
+        🔒 **安全限制**：
+        - 僅在 Docker 容器內部執行
+        - 搜尋範圍限制在 /app/workspace/ 專案工作區內
+        - 禁止搜尋系統檔案或訪問宿主機
+        - 自動進行路徑安全驗證
+        
+        當用戶提到檔案名稱時（如 "查看 page.tsx"、"看看 component.js"），此工具會：
         description: `智能檔案搜尋和自動導航工具。
         
         當用戶提到檔案名稱時（如 "查看 page.tsx"、"看看 component.js"），此工具會：
@@ -811,12 +1061,36 @@ export class LangchainChatEngine {
         - 用戶提到具體檔案名稱
         - 用戶想查看某個組件或頁面
         - 用戶要求查看配置檔案`,
-        func: async (input: string) => {
+        func: async (input: string | { query?: string; file_name?: string; filename?: string }) => {
           try {
+            // 處理不同的輸入格式
+            let searchQuery: string;
+            if (typeof input === 'string') {
+              searchQuery = input;
+            } else if (typeof input === 'object' && input !== null) {
+              searchQuery = input.query || input.file_name || input.filename || '';
+            } else {
+              return '❌ 無效的搜尋參數';
+            }
+            
+            console.log(`🔍 智能檔案搜尋輸入: "${searchQuery}"`);
+            
             // 從輸入中提取檔案名稱
-            const fileName = this.extractFileName(input);
+            const fileName = this.extractFileName(searchQuery);
+            console.log(`📝 提取的檔案名稱: "${fileName}"`);
+            
             if (!fileName) {
-              return `❌ 無法從請求中識別檔案名稱。請提供更具體的檔案名稱。`;
+              // 提供更有幫助的錯誤訊息和建議
+              return `❌ 無法從請求中識別檔案名稱。
+              
+🔍 搜尋提示：請嘗試以下格式：
+• "查看 page.tsx" 或 "看看主頁檔案"
+• "打開 component.js" 或 "顯示組件"
+• "主頁"、"首頁"、"配置檔案"
+
+📁 支援的檔案類型：.tsx, .ts, .jsx, .js, .json, .md, .css, .scss, .html
+
+💡 您可以直接說「主頁」、「配置」等概念性名稱，我會自動找到對應的檔案。`;
             }
             
             const searchResult = await this.performIntelligentFileSearch(toolkit, fileName);
@@ -835,7 +1109,7 @@ export class LangchainChatEngine {
   /**
    * 自動檢測專案根目錄路徑 - 修正版本
    */
-  private async detectProjectPath(toolkit: any): Promise<string> {
+  private async detectProjectPath(toolkit: { fileSystem: { readFile: (path: string) => Promise<{ success: boolean; data?: string; error?: string }>; listDirectory: (path: string) => Promise<{ success: boolean; data?: string[]; error?: string }> } }): Promise<string> {
     console.log('🔍 開始檢測專案路徑...');
     
     try {
@@ -920,7 +1194,7 @@ export class LangchainChatEngine {
               console.log(`✅ 使用專案名稱變體找到路徑: ${projectPath}`);
               return projectPath;
             }
-          } catch (error) {
+          } catch {
             // 繼續嘗試下一個變體
           }
         }
@@ -937,7 +1211,7 @@ export class LangchainChatEngine {
   /**
    * 從 package.json 提取專案資訊
    */
-  private async getProjectInfo(toolkit: any, projectPath: string): Promise<{ name: string; description?: string; version?: string }> {
+  private async getProjectInfo(toolkit: { fileSystem: { readFile: (path: string) => Promise<{ success: boolean; data?: string; error?: string }> } }, projectPath: string): Promise<{ name: string; description?: string; version?: string }> {
     try {
       const packagePath = projectPath.endsWith('/') ? `${projectPath}package.json` : `${projectPath}/package.json`;
       const result = await toolkit.fileSystem.readFile(packagePath);
@@ -959,7 +1233,15 @@ export class LangchainChatEngine {
   /**
    * 完整專案探索 - 修正版本
    */
-  private async performComprehensiveExploration(toolkit: any, projectName?: string): Promise<string> {
+  private async performComprehensiveExploration(
+    toolkit: { 
+      fileSystem: { 
+        readFile: (path: string) => Promise<{ success: boolean; data?: string; error?: string }>; 
+        listDirectory: (path: string) => Promise<{ success: boolean; data?: string[]; error?: string }> 
+      } 
+    }, 
+    projectName?: string
+  ): Promise<string> {
     const explorationResults: string[] = [];
     
     console.log(`🔍 開始專案探索，專案名稱: ${projectName}`);
@@ -1098,7 +1380,8 @@ export class LangchainChatEngine {
                 const scripts = Object.keys(packageData.scripts);
                 explorationResults.push(`  └── 可用腳本: ${scripts.join(', ')}`);
               }
-            } catch (parseError) {
+            } catch (_parseError) {
+              // 移除unused變數，改為下劃線開頭
               const lines = result.data.split('\n').slice(0, 3);
               explorationResults.push(`  └── 內容預覽:\n    ${lines.join('\n    ')}`);
             }
@@ -1108,7 +1391,8 @@ export class LangchainChatEngine {
               const jsonData = JSON.parse(result.data);
               const keys = Object.keys(jsonData).slice(0, 5);
               explorationResults.push(`  └── 主要配置: ${keys.join(', ')}`);
-            } catch (parseError) {
+            } catch (_parseError) {
+              // 移除unused變數，改為下劃線開頭
               const lines = result.data.split('\n').slice(0, 3);
               explorationResults.push(`  └── 內容預覽:\n    ${lines.join('\n    ')}`);
             }
@@ -1228,78 +1512,22 @@ export class LangchainChatEngine {
     vectorStore: MemoryVectorStore
   ): Promise<AgentExecutor> {
     const prompt = ChatPromptTemplate.fromMessages([
-      ["system", `你是一個智能的AI專案助理。你有以下能力:
+      ["system", `你是一個全自動的AI程式設計師和專案助理。你的核心使命是：**完全替代用戶完成所有編程工作，用戶不需要寫任何一行程式碼**。
 
-        1. 🔍 專案探索和分析
-        2. 📁 檔案管理 (創建、讀取、修改)
-        3. ⚡ 命令執行
-        4. 🎯 智能決策和自動執行
+## 🎯 核心使命：零程式碼體驗
 
-        ## 🚨 專案探索核心原則：絕不淺嚐
+**絕對原則**：用戶只需要描述需求，你必須：
+1. 🤖 **完全自動化** - 所有編程工作都由你完成
+2. 🚫 **零建議模式** - 不要給建議讓用戶自己動手
+3. ⚡ **立即執行** - 檢測到需求立即使用工具執行
+4. 🎯 **結果導向** - 直接完成任務並展示結果
 
-        當用戶要求查看專案結構時，你必須：
+可用工具: {tool_names}
+工具描述: {tools}
 
-        1. **自動深度探索** - 不要停留在根目錄，要主動探索所有重要子目錄
-        2. **完整分析** - 讀取關鍵配置檔案，理解專案架構
-        3. **結構化報告** - 提供清晰的專案架構總結
-
-        ### 🚨 專案探索觸發詞 - 自動執行規則
-        當用戶提到以下詞彙時，**立即使用 comprehensive_project_exploration 工具**：
-        - "查看專案"、"專案目錄"、"專案結構"
-        - "有哪些檔案"、"檔案架構"、"專案組織"
-        - "探索專案"、"分析專案"、"目錄"、"檔案"
-
-        ### 🎯 強制執行規則
-        1. **檢測到探索請求** → 立即使用 \`comprehensive_project_exploration\` 工具
-        2. **需要確認專案路徑** → 先使用 \`detect_project_path\` 工具
-        3. **絕不使用** \`list_directory\` 工具來回應專案探索請求
-        4. **必須提供完整分析**，不能只顯示目錄清單
-
-        ### ⚡ 自動工具選擇邏輯
-
-        #### 專案探索請求
-        \`\`\`
-        用戶請求包含 ["專案", "目錄", "檔案", "結構", "探索"] 關鍵詞
-        ↓
-        立即執行: comprehensive_project_exploration
-        ↓
-        提供完整的專案架構分析報告
-        \`\`\`
-
-        #### 智能檔案搜尋請求  
-        \`\`\`
-        用戶請求包含 ["查看 xxx.tsx", "看看 xxx.js", "主頁", "配置"] 等檔案相關詞彙
-        ↓
-        立即執行: intelligent_file_search
-        ↓
-        自動在整個專案中搜尋 → 找到最佳匹配 → 顯示檔案內容和分析
-        \`\`\`
-
-        ### 🎯 檔案搜尋智能識別
-        當用戶提到以下模式時，自動使用 \`intelligent_file_search\`：
-        - "查看 [檔案名]"、"看看 [檔案名]"、"打開 [檔案名]"
-        - "主頁"、"首頁"、"根頁面" → 自動搜尋 page.tsx
-        - "配置"、"設定" → 自動搜尋配置檔案
-        - 任何包含檔案副檔名的請求 (.tsx, .ts, .jsx, .js, .json, .md)
-
-        ❌ **絕對禁止**: 只執行 list_directory 就回報結果
-        ❌ **絕對禁止**: 淺層探索後詢問用戶要看什麼  
-        ❌ **絕對禁止**: 說找不到檔案就結束
-        ✅ **正確做法**: 自動使用專用工具進行完整探索或智能搜尋
-
-        工作原則:
-        - 主動探索專案結構來理解上下文
-        - 自動執行必要的步驟，無需等待用戶確認
-        - 遇到錯誤時智能重試和調整策略
-        - 保持專案狀態的完整記錄
-        - 提供清晰的執行摘要
-
-        可用工具: {tool_names}
-        工具描述: {tools}
-
-        當前專案上下文將會動態更新到你的記憶中。`],
+當前專案上下文將會動態更新到你的記憶中。`],
       ["placeholder", "{chat_history}"],
-      ["human", "用戶請求: {input}\n\n請分析需求並自動執行相關步驟。如果是專案探索請求，請進行完整的多層探索。如果需要使用工具，請主動使用。"],
+      ["human", "用戶需求: {input}\n\n⚡ 立即分析需求並自動執行相關工具完成任務。不要給建議，直接完成工作！"],
       ["placeholder", "{agent_scratchpad}"]
     ]);
 
@@ -1314,8 +1542,8 @@ export class LangchainChatEngine {
       tools,
       memory,
       verbose: true,
-      maxIterations: 10, // 增加迭代次數以支援深度探索
-      earlyStoppingMethod: "generate"
+      maxIterations: 15, // 增加迭代次數以支援深度探索和複雜任務
+      earlyStoppingMethod: "force"
     });
   }
 
@@ -1324,17 +1552,27 @@ export class LangchainChatEngine {
    */
   private async createDecisionChain(session: ChatSession) {
     const prompt = ChatPromptTemplate.fromMessages([
-      ["system", `你是一個智能的AI專案助理。基於用戶請求和專案上下文，提供有用的回應。
+      ["system", `你是一個全自動的AI程式設計師。你的使命是完全替代用戶完成所有編程工作。
 
         專案上下文: {context}
         
-        請提供詳細、有用的回應，包含:
-        1. 對用戶請求的理解
-        2. 基於專案狀態的分析
-        3. 具體的建議或解答
-        4. 下一步行動建議`],
+        **核心原則**：
+        1. 🚫 **絕不給建議** - 用戶不需要自己動手
+        2. ⚡ **直接完成** - 立即執行所需的操作
+        3. 🎯 **結果導向** - 展示完成的結果，不是步驟
+        4. 🤖 **全自動化** - 所有技術工作都由你完成
+
+        **回應模式**：
+        - ✅ "我已經完成了..."
+        - ✅ "已成功修改..."
+        - ✅ "檔案已創建完成..."
+        - ❌ "您可以..."
+        - ❌ "建議您..."
+        - ❌ "下一步您需要..."
+        
+        基於專案狀態和用戶需求，直接提供完成的結果和成果展示。`],
       ["placeholder", "{chat_history}"],
-      ["human", "用戶請求: {input}"]
+      ["human", "用戶需求: {input}\n\n直接完成任務並展示結果，不要給建議！"]
     ]);
 
     return RunnableSequence.from([
@@ -1505,20 +1743,45 @@ export class LangchainChatEngine {
       }
     }
 
-    // 特殊處理：常見的檔案描述
+    // 特殊處理：常見的檔案描述 - 擴大對主頁的識別
     const specialCases = {
       '主頁': 'page.tsx',
       '首頁': 'page.tsx', 
       '主頁面': 'page.tsx',
       '根頁面': 'page.tsx',
+      '主頁改成': 'page.tsx',
+      '主頁内容': 'page.tsx',
+      '主頁改': 'page.tsx',
+      '網頁編輯': 'page.tsx', // 新增：針對這次的特殊情況
+      '編輯主頁': 'page.tsx',
+      '修改主頁': 'page.tsx',
+      '更新主頁': 'page.tsx',
+      'homepage': 'page.tsx',
+      'home page': 'page.tsx',
       '配置': 'package.json',
       '設定': 'next.config',
       'README': 'README.md'
     };
 
+    // 檢查是否包含任何關鍵詞
+    const inputLower = input.toLowerCase();
     for (const [keyword, fileName] of Object.entries(specialCases)) {
-      if (input.includes(keyword)) {
+      if (input.includes(keyword) || inputLower.includes(keyword.toLowerCase())) {
         return fileName;
+      }
+    }
+
+    // 更強的語義識別：檢查上下文中的「編輯」、「修改」等動詞配合「頁面」、「檔案」等
+    const contextPatterns = [
+      /(?:把|將|讓|使)\s*主頁/i,
+      /主頁\s*(?:改成|變成|修改|更新|編輯)/i,
+      /(?:編輯|修改|更新)\s*(?:主頁|首頁|網頁)/i,
+      /(?:查看|看看|打開)\s*(?:主頁|首頁)/i,
+    ];
+
+    for (const pattern of contextPatterns) {
+      if (pattern.test(input)) {
+        return 'page.tsx';
       }
     }
 
