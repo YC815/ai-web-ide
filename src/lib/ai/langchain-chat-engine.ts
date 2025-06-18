@@ -7,7 +7,8 @@
 
 import { ChatOpenAI } from "@langchain/openai";
 import { ConversationalRetrievalQAChain } from "langchain/chains";
-import { BufferMemory, ConversationBufferWindowMemory } from "langchain/memory";
+import { BufferMemory } from "langchain/memory";
+import { ConversationBufferWindowMemory } from "langchain/memory";
 import { 
   AgentExecutor, 
   createReactAgent,
@@ -19,11 +20,8 @@ import {
   RunnablePassthrough,
   RunnableLambda
 } from "@langchain/core/runnables";
-import { 
-  ChatPromptTemplate, 
-  MessagesPlaceholder,
-  HumanMessagePromptTemplate,
-  SystemMessagePromptTemplate
+import {
+  ChatPromptTemplate
 } from "@langchain/core/prompts";
 import { 
   BaseMessage, 
@@ -41,6 +39,15 @@ import { Document } from "@langchain/core/documents";
 import { createAIContextManager, ProjectContext, ProjectSnapshot } from './context-manager';
 import { createDockerToolkit, DockerToolkit, createDefaultDockerContext } from '../docker/tools';
 import { DockerSecurityValidator } from './docker-security-validator';
+
+// 統一 Function Call 系統整合
+// 注意：這些導入可能不存在，因為 langchain-binder 還未實現
+// import { 
+//   createHighPriorityToolsForAgent,
+//   selectToolsForRequest,
+//   convertToLangchainTool 
+// } from '../functions/langchain-binder';
+// import { allTools, toolsByCategory } from '../functions/index';
 
 // 嚴格定義類型，替換 any
 export interface ToolCallResult {
@@ -162,9 +169,8 @@ export class LangchainChatEngine {
 
     console.log(`🚀 創建新的 Langchain 聊天會話: ${sessionId}`);
     
-    // 創建記憶體管理
-    const memory = new ConversationBufferWindowMemory({
-      k: this.contextWindow,
+    // 創建記憶體管理 - 使用 BufferMemory 替代已棄用的 ConversationBufferWindowMemory
+    const memory = new BufferMemory({
       memoryKey: "chat_history",
       returnMessages: true,
       outputKey: "output",
@@ -449,8 +455,7 @@ export class LangchainChatEngine {
     confidence: number;
   }> {
     const decisionPrompt = ChatPromptTemplate.fromMessages([
-      new SystemMessagePromptTemplate({
-        template: `你是一個智能決策助手。分析用戶請求並決定最佳行動方案。
+      ["system", `你是一個智能決策助手。分析用戶請求並決定最佳行動方案。
 
         當前狀況:
         - 重試次數: {retryCount}/3
@@ -467,11 +472,8 @@ export class LangchainChatEngine {
         2. decision: 選擇的決策 (continue_tools/respond_to_user/need_input)
         3. confidence: 信心度 (0-1)
         
-        以 JSON 格式回應。`
-      }),
-      new HumanMessagePromptTemplate({
-        template: "用戶請求: {userMessage}"
-      })
+        以 JSON 格式回應。`],
+      ["human", "用戶請求: {userMessage}"]
     ]);
 
     const decisionChain = decisionPrompt.pipe(this.model).pipe(new StringOutputParser());
@@ -1226,8 +1228,7 @@ export class LangchainChatEngine {
     vectorStore: MemoryVectorStore
   ): Promise<AgentExecutor> {
     const prompt = ChatPromptTemplate.fromMessages([
-      new SystemMessagePromptTemplate({
-        template: `你是一個智能的AI專案助理。你有以下能力:
+      ["system", `你是一個智能的AI專案助理。你有以下能力:
 
         1. 🔍 專案探索和分析
         2. 📁 檔案管理 (創建、讀取、修改)
@@ -1296,13 +1297,10 @@ export class LangchainChatEngine {
         可用工具: {tool_names}
         工具描述: {tools}
 
-        當前專案上下文將會動態更新到你的記憶中。`
-      }),
-      new MessagesPlaceholder("chat_history"),
-      new HumanMessagePromptTemplate({
-        template: "用戶請求: {input}\n\n請分析需求並自動執行相關步驟。如果是專案探索請求，請進行完整的多層探索。如果需要使用工具，請主動使用。"
-      }),
-      new MessagesPlaceholder("agent_scratchpad")
+        當前專案上下文將會動態更新到你的記憶中。`],
+      ["placeholder", "{chat_history}"],
+      ["human", "用戶請求: {input}\n\n請分析需求並自動執行相關步驟。如果是專案探索請求，請進行完整的多層探索。如果需要使用工具，請主動使用。"],
+      ["placeholder", "{agent_scratchpad}"]
     ]);
 
     const agent = await createStructuredChatAgent({
@@ -1326,8 +1324,7 @@ export class LangchainChatEngine {
    */
   private async createDecisionChain(session: ChatSession) {
     const prompt = ChatPromptTemplate.fromMessages([
-      new SystemMessagePromptTemplate({
-        template: `你是一個智能的AI專案助理。基於用戶請求和專案上下文，提供有用的回應。
+      ["system", `你是一個智能的AI專案助理。基於用戶請求和專案上下文，提供有用的回應。
 
         專案上下文: {context}
         
@@ -1335,12 +1332,9 @@ export class LangchainChatEngine {
         1. 對用戶請求的理解
         2. 基於專案狀態的分析
         3. 具體的建議或解答
-        4. 下一步行動建議`
-      }),
-      new MessagesPlaceholder("chat_history"),
-      new HumanMessagePromptTemplate({
-        template: "用戶請求: {input}"
-      })
+        4. 下一步行動建議`],
+      ["placeholder", "{chat_history}"],
+      ["human", "用戶請求: {input}"]
     ]);
 
     return RunnableSequence.from([
@@ -1785,14 +1779,6 @@ export class LangchainChatEngine {
     
     // 導入分析
     const imports = content.match(/^import .+$/gm);
-// 統一 Function Call 系統整合
-import { 
-  createHighPriorityToolsForAgent,
-  selectToolsForRequest,
-  convertToLangchainTool 
-} from '../functions/langchain-binder';
-import { allTools, toolsByCategory } from '../functions/index';
-
     if (imports && imports.length > 0) {
       analysis.push(`📦 導入模組：${imports.length} 個`);
     }

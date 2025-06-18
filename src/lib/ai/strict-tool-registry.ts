@@ -4,8 +4,8 @@
  * 完全替換原有的工具註冊器，確保無法訪問宿主機檔案
  */
 
-import { logger } from '../logger';
-// import { StrictDockerTools } from './docker-tools-v2'; // 已刪除，使用新的 docker 工具替代
+import { logger } from '../core/logger';
+import { StrictDockerTools } from './strict-docker-tools';
 import { DockerAIEditorManager } from '../docker/ai-editor-manager';
 import { ToolResult } from './agent-controller';
 

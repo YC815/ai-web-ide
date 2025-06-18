@@ -8,6 +8,7 @@ import {
   FunctionAccessLevel 
 } from '../types';
 import type { OpenAIFunctionSchema } from '../categories';
+import { diffTools } from './diff-tool';
 
 // 時間戳轉換
 export const utilityFormatTimestamp: FunctionDefinition = {
@@ -318,7 +319,8 @@ export const utilityFunctions: FunctionDefinition[] = [
   utilityFormatJson,
   utilityBase64,
   utilityUrlEncode,
-  utilityHash
+  utilityHash,
+  ...diffTools
 ];
 
 // 獲取實用工具的 OpenAI Function Schema

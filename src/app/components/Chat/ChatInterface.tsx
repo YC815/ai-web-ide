@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 
+
 // 聊天訊息介面
 interface ChatMessage {
   id: string;
@@ -235,7 +236,7 @@ const ChatWindowSelector = ({
   activeWindowId: string;
   onSelectWindow: (windowId: string) => void;
   onNewWindow: () => void;
-  onDeleteWindow: (windowId: string) => void;
+  onDeleteWindow: (windowId: string) => Promise<void>;
 }) => {
   return (
     <div className="flex items-center space-x-2 p-2 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
@@ -254,9 +255,9 @@ const ChatWindowSelector = ({
             <span className="truncate max-w-24">{window.title}</span>
             {windows.length > 1 && (
               <button
-                onClick={(e) => {
+                onClick={async (e) => {
                   e.stopPropagation();
-                  onDeleteWindow(window.id);
+                  await onDeleteWindow(window.id);
                 }}
                 className="text-gray-400 hover:text-red-500 transition-colors"
               >
@@ -428,14 +429,84 @@ export function ChatInterface({
     
     // 設置當前時間，避免 hydration 錯誤
     setLastUpdateTime(new Date().toLocaleString('zh-TW'));
+
+    // 定期清理過期資料（每30分鐘）
+    const cleanupInterval = setInterval(async () => {
+      try {
+        await fetch('/api/chat-enhanced', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: '__CLEANUP__',
+            projectId: projectId || `ai-web-ide-${projectName.toLowerCase().replace(/\s+/g, '-')}`,
+            projectName,
+            apiToken: apiToken || 'sk-placeholder',
+          })
+        });
+      } catch (error) {
+        console.log('清理操作失敗:', error);
+      }
+    }, 30 * 60 * 1000); // 30分鐘
+
+    return () => {
+      clearInterval(cleanupInterval);
+    };
   }, []);
   
-  // 創建初始聊天視窗
+  // 載入現有聊天視窗
   useEffect(() => {
-    if (chatWindows.length === 0) {
-      createNewChatWindow();
+    loadChatWindows();
+  }, [projectId]);
+
+  // 載入聊天視窗
+  const loadChatWindows = async () => {
+    if (!projectId) return;
+    
+    try {
+      const response = await fetch(`/api/chat-enhanced?projectId=${encodeURIComponent(projectId)}`);
+      if (response.ok) {
+        const result = await response.json();
+        if (result.success && result.data.rooms && result.data.rooms.length > 0) {
+          const windows: ChatWindow[] = result.data.rooms.map((room: any) => ({
+            id: room.id,
+            title: room.title,
+            messages: room.messages.map((msg: any) => ({
+              id: msg.id,
+              role: msg.role,
+              content: msg.content,
+              timestamp: new Date(msg.timestamp),
+              tokens: msg.tokens,
+              cost: msg.cost,
+              toolCallsExecuted: msg.toolCallsExecuted,
+              stats: msg.metadata?.stats,
+            })),
+            isActive: room.isActive,
+            createdAt: room.createdAt,
+            totalTokens: room.totalTokens,
+            totalCost: room.totalCost,
+          }));
+          
+          setChatWindows(windows);
+          
+          // 設置第一個活躍的聊天視窗為當前視窗
+          const activeWindow = windows.find(w => w.isActive) || windows[0];
+          if (activeWindow) {
+            setActiveWindowId(activeWindow.id);
+          }
+        } else {
+          // 沒有聊天室時，創建一個新的本地聊天視窗（不調用 API）
+          createLocalChatWindow();
+        }
+      } else {
+        // API 調用失敗，創建本地聊天視窗
+        createLocalChatWindow();
+      }
+    } catch (error) {
+      console.error('載入聊天視窗失敗:', error);
+      // 發生錯誤時創建本地聊天視窗
+      createLocalChatWindow();
     }
-  }, [chatWindows.length]);
+  };
   
   // 保存 Token 到 localStorage
   const saveToken = (token: string) => {
@@ -452,10 +523,11 @@ export function ChatInterface({
   // 獲取當前活躍的聊天視窗
   const activeWindow = chatWindows.find(w => w.id === activeWindowId);
   
-  // 創建新聊天視窗
-  const createNewChatWindow = () => {
+  // 創建本地聊天視窗（不調用 API，避免循環）
+  const createLocalChatWindow = () => {
+    const newWindowId = generateId('room');
     const newWindow: ChatWindow = {
-      id: generateId('chat'),
+      id: newWindowId,
       title: `聊天 ${chatWindows.length + 1}`,
       messages: [{
         id: generateId('welcome'),
@@ -463,28 +535,97 @@ export function ChatInterface({
         content: `這是一個新的聊天視窗。我會記住之前對話的上下文，可以繼續協助您開發 **${projectName}** 專案。`,
         timestamp: new Date(),
       }],
-      isActive: false,
+      isActive: true,
       createdAt: new Date(),
       totalTokens: 0,
       totalCost: 0
     };
     
-    setChatWindows(prev => [...prev, newWindow]);
+    setChatWindows([newWindow]);
     setActiveWindowId(newWindow.id);
   };
   
+  // 創建新聊天視窗（通過 API）
+  const createNewChatWindow = async () => {
+    const newWindowId = generateId('room');
+    
+    try {
+      // 通過 API 創建新聊天室（不自動發送訊息）
+      const response = await fetch('/api/chat-enhanced', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'create_room',
+          roomId: newWindowId,
+          projectId: projectId || `ai-web-ide-${projectName.toLowerCase().replace(/\s+/g, '-')}`,
+          projectName,
+          containerId: containerId || projectId,
+          apiToken: apiToken || 'sk-placeholder',
+        })
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        if (result.success) {
+          // 直接添加到本地狀態，不重新載入
+          const newWindow: ChatWindow = {
+            id: newWindowId,
+            title: `聊天 ${chatWindows.length + 1}`,
+            messages: [{
+              id: generateId('welcome'),
+              role: 'assistant',
+              content: `這是一個新的聊天視窗。我會記住之前對話的上下文，可以繼續協助您開發 **${projectName}** 專案。`,
+              timestamp: new Date(),
+            }],
+            isActive: true,
+            createdAt: new Date(),
+            totalTokens: 0,
+            totalCost: 0
+          };
+          
+          setChatWindows(prev => [...prev, newWindow]);
+          setActiveWindowId(newWindowId);
+        }
+      } else {
+        // 如果 API 調用失敗，創建本地聊天視窗
+        createLocalChatWindow();
+      }
+    } catch (error) {
+      console.error('創建聊天視窗失敗:', error);
+      // 創建本地聊天視窗作為後備方案
+      createLocalChatWindow();
+    }
+  };
+  
   // 刪除聊天視窗
-  const deleteChatWindow = (windowId: string) => {
+  const deleteChatWindow = async (windowId: string) => {
     if (chatWindows.length <= 1) return; // 至少保留一個視窗
     
-    setChatWindows(prev => {
-      const filtered = prev.filter(w => w.id !== windowId);
-      // 如果刪除的是當前活躍視窗，切換到第一個視窗
-      if (windowId === activeWindowId) {
-        setActiveWindowId(filtered[0]?.id || '');
+    try {
+      // 通過 API 刪除聊天室
+      const response = await fetch(`/api/chat-enhanced?roomId=${encodeURIComponent(windowId)}`, {
+        method: 'DELETE',
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        if (result.success) {
+          // 從本地狀態中移除
+          setChatWindows(prev => {
+            const filtered = prev.filter(w => w.id !== windowId);
+            // 如果刪除的是當前活躍視窗，切換到第一個視窗
+            if (windowId === activeWindowId) {
+              setActiveWindowId(filtered[0]?.id || '');
+            }
+            return filtered;
+          });
+        }
+      } else {
+        console.error('刪除聊天室失敗');
       }
-      return filtered;
-    });
+    } catch (error) {
+      console.error('刪除聊天視窗錯誤:', error);
+    }
   };
   
   // 發送訊息
@@ -515,39 +656,17 @@ export function ChatInterface({
     ));
 
     try {
-      // 根據配置決定使用哪個 API
-      let apiEndpoint: string;
-      let requestBody: any;
-
-      if (useAgentFramework) {
-        // 使用新的 Agent 控制框架
-        apiEndpoint = '/api/chat-agent';
-        requestBody = {
-          message: userMessage,
-          projectId: projectId || `ai-web-ide-${projectName.toLowerCase().replace(/\s+/g, '-')}`,
-          projectName,
-          containerId: containerId || projectId, // 確保傳遞容器 ID
-          conversationId: activeWindowId,
-          apiToken,
-          enableAutoRepair: autoFixMode,
-          enableLogging: true,
-          maxToolCalls: 8,
-          timeoutMs: 45000,
-        };
-      } else {
-        // 預設使用新的 Langchain API
-        apiEndpoint = '/api/chat';
-        requestBody = {
-          message: userMessage,
-          projectId: projectId || `ai-web-ide-${projectName.toLowerCase().replace(/\s+/g, '-')}`,
-          projectName,
-          containerId: containerId || projectId, // 確保傳遞容器 ID
-          conversationId: activeWindowId,
-          apiToken,
-          autoRepairMode: autoFixMode,
-          useLangchain: true, // 啟用 Langchain 引擎
-        };
-      }
+      // 使用增強的聊天 API（整合 SQLite 儲存）
+      const apiEndpoint = '/api/chat-enhanced';
+      const requestBody = {
+        message: userMessage,
+        roomId: activeWindowId,
+        projectId: projectId || `ai-web-ide-${projectName.toLowerCase().replace(/\s+/g, '-')}`,
+        projectName,
+        containerId: containerId || projectId,
+        apiToken,
+        contextLength: 15, // 使用更多的上下文
+      };
       
       const response = await fetch(apiEndpoint, {
         method: 'POST',
@@ -611,26 +730,16 @@ export function ChatInterface({
       const result = await response.json();
       
       if (result.success) {
-        // 處理待處理的操作（僅在非 Agent 框架模式下）
-        if (!useAgentFramework && result.data.pendingActions && result.data.pendingActions.length > 0) {
-          setPendingActions(result.data.pendingActions);
-        }
-
-        // 更新 Agent 統計資訊（僅在 Agent 框架模式下）
-        if (useAgentFramework && result.data.agentStats) {
-          setAgentStats(result.data.agentStats);
-        }
-
         // 添加 AI 回應到聊天視窗
         const aiMessage: ChatMessage = {
-          id: generateId('msg-ai'),
+          id: result.data.messageId,
           role: 'assistant',
-          content: result.data.response || result.data.message,
+          content: result.data.message,
           timestamp: new Date(),
           tokens: result.data.tokens,
           cost: result.data.cost,
           toolCallsExecuted: result.data.toolCallsExecuted,
-          stats: result.data.stats || result.data.agentStats
+          stats: result.data.stats
         };
 
         setChatWindows(prev => prev.map(window => 
@@ -644,17 +753,9 @@ export function ChatInterface({
             : window
         ));
 
-        // 如果是自動修正模式，顯示修正狀態
-        if (autoFixMode && result.data.autoRepairResult) {
-          const repairResult = result.data.autoRepairResult;
-          console.log('🔧 自動修正結果:', repairResult);
-          
-          // 如果還在進行中，設置自動修正狀態
-          if (repairResult.completionStatus === 'in_progress') {
-            setAutoFixRunning(true);
-          } else {
-            setAutoFixRunning(false);
-          }
+        // 顯示使用的上下文資訊（調試用）
+        if (result.data.contextUsed) {
+          console.log('🧠 使用的上下文:', result.data.contextUsed);
         }
 
         setLastUpdateTime(new Date().toLocaleTimeString('zh-TW'));
@@ -868,7 +969,7 @@ export function ChatInterface({
           windows={chatWindows}
           activeWindowId={activeWindowId}
           onSelectWindow={setActiveWindowId}
-          onNewWindow={createNewChatWindow}
+          onNewWindow={() => createNewChatWindow()}
           onDeleteWindow={deleteChatWindow}
         />
       </div>

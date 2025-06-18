@@ -27,6 +27,14 @@ export interface StrictAgentFactoryConfig {
   enableLogging?: boolean;
 }
 
+/**
+ * 標準化專案名稱：將短橫線轉換為底線
+ * 這是因為容器內的實際目錄使用底線格式
+ */
+function normalizeProjectName(projectName: string): string {
+  return projectName.replace(/-/g, '_');
+}
+
 export class StrictAgentFactory {
   private static instance: StrictAgentFactory;
   private agentController?: AgentController;
@@ -60,14 +68,18 @@ export class StrictAgentFactory {
         throw new Error('projectName 和 dockerContainerId 是必要的配置');
       }
       
+      // 標準化專案名稱（將短橫線轉換為底線，以匹配容器內實際目錄）
+      const normalizedProjectName = normalizeProjectName(config.projectName);
+      
       // 記錄嚴格Agent控制器建立開始
       await aiOutputLogger.logSystem(
         'StrictAgentFactory',
         '開始建立嚴格 Agent 控制器',
         { 
           config,
+          normalizedProjectName,
           securityLevel: 'MAXIMUM',
-          workingDirectory: `/app/workspace/${config.projectName}`
+          workingDirectory: `/app/workspace/${normalizedProjectName}`
         }
       );
 
@@ -76,8 +88,8 @@ export class StrictAgentFactory {
         const dockerConfig: DockerAIEditorConfig = {
           dockerContext: {
             containerId: config.dockerContainerId,
-            containerName: `strict-${config.projectName}`,
-            workingDirectory: `/app/workspace/${config.projectName}`,
+            containerName: `strict-${normalizedProjectName}`,
+            workingDirectory: `/app/workspace/${normalizedProjectName}`,
             status: 'running' as const,
           },
           enableUserConfirmation: false,
@@ -106,7 +118,7 @@ export class StrictAgentFactory {
       if (!this.strictToolRegistry) {
         this.strictToolRegistry = new StrictToolRegistry(
           this.dockerManager,
-          config.projectName,
+          normalizedProjectName, // 使用標準化的專案名稱
           config.dockerContainerId,
           config.enableLogging ?? true
         );
@@ -144,6 +156,7 @@ export class StrictAgentFactory {
         { 
           agentConfig,
           projectName: config.projectName,
+          normalizedProjectName,
           securityLevel: 'MAXIMUM'
         }
       );

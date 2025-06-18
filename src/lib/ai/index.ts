@@ -25,6 +25,7 @@ export * from './langchain-chat-engine';
 
 // 提示系統 (保留，但建議整合到新系統)
 export * from './prompts';
+/** @deprecated 使用新的統一 Function Call 系統中的提示工具替代 */
 export * from './prompt-builder';
 
 // 輸出記錄 (已棄用)
@@ -48,6 +49,9 @@ export * from './enhanced-tool-registry';
 export * from './strict-tool-registry';
 /** @deprecated 使用 aiAgentExecute 替代，位於 src/lib/functions/ai */
 export * from './strict-agent-factory';
+
+// 嚴格 Docker 工具 (替代已刪除的 docker-tools-v2)
+export * from './strict-docker-tools';
 
 // 遷移輔助工具
 import { migrationManager } from '../functions/migration-manager';

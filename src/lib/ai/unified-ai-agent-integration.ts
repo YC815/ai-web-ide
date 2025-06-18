@@ -7,13 +7,10 @@
  */
 
 import { ChatOpenAI } from "@langchain/openai";
-import { ConversationBufferWindowMemory } from "langchain/memory";
+import { BufferMemory } from "langchain/memory";
 import { AgentExecutor, createStructuredChatAgent } from "langchain/agents";
-import { 
-  ChatPromptTemplate, 
-  MessagesPlaceholder,
-  HumanMessagePromptTemplate,
-  SystemMessagePromptTemplate
+import {
+  ChatPromptTemplate
 } from "@langchain/core/prompts";
 import { DynamicTool } from "@langchain/core/tools";
 import { MemoryVectorStore } from "langchain/vectorstores/memory";
@@ -109,7 +106,7 @@ export interface AgentResponse {
 export interface AgentSession {
   sessionId: string;
   config: UnifiedAgentConfig;
-  memory: ConversationBufferWindowMemory;
+  memory: BufferMemory;
   vectorStore?: MemoryVectorStore;
   agent: AgentExecutor;
   availableTools: DynamicTool[];
@@ -159,9 +156,8 @@ export class UnifiedAIAgentIntegrator {
       });
     }
 
-    // 創建記憶體管理
-    const memory = new ConversationBufferWindowMemory({
-      k: finalConfig.contextWindow || 20,
+    // 創建記憶體管理 - 使用 BufferMemory 替代已棄用的 ConversationBufferWindowMemory
+    const memory = new BufferMemory({
       memoryKey: "chat_history",
       returnMessages: true,
       outputKey: "output",
@@ -273,12 +269,11 @@ export class UnifiedAIAgentIntegrator {
 
   private async createUnifiedAgent(
     tools: DynamicTool[],
-    memory: ConversationBufferWindowMemory,
+    memory: BufferMemory,
     config: UnifiedAgentConfig
   ): Promise<AgentExecutor> {
     const prompt = ChatPromptTemplate.fromMessages([
-      new SystemMessagePromptTemplate({
-        template: `你是專業的 AI 開發助手，協助開發專案「${config.projectName}」。
+      ["system", `你是專業的 AI 開發助手，協助開發專案「${config.projectName}」。
 
 ## 🛠️ 統一工具系統
 使用新的統一 Function Call 系統，包含：
@@ -287,13 +282,10 @@ export class UnifiedAIAgentIntegrator {
 - 📁 檔案系統：檔案讀寫、目錄操作、搜尋
 - 📋 專案管理：專案資訊、工作區管理、程式碼分析
 
-可用工具: {tool_names}`
-      }),
-      new MessagesPlaceholder("chat_history"),
-      new HumanMessagePromptTemplate({
-        template: "用戶請求: {input}"
-      }),
-      new MessagesPlaceholder("agent_scratchpad")
+可用工具: {tool_names}`],
+      ["placeholder", "{chat_history}"],
+      ["human", "用戶請求: {input}"],
+      ["placeholder", "{agent_scratchpad}"]
     ]);
 
     const agent = await createStructuredChatAgent({
