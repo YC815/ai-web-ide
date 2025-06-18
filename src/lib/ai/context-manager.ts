@@ -5,6 +5,7 @@ import { createDockerToolkit, DockerToolkit, DockerToolResponse, createDefaultDo
 export interface ProjectContext {
   projectId: string;
   projectName: string;
+  containerId?: string; // 實際的 Docker 容器 ID
   containerStatus: 'running' | 'stopped' | 'error';
 }
 
@@ -44,7 +45,13 @@ export class AIContextManager {
   private snapshotCacheDuration = 30000; // 30秒快取
 
   constructor(private projectContext: ProjectContext) {
-    const dockerContext = createDefaultDockerContext(`${projectContext.projectId}-container`, `ai-dev-${projectContext.projectName}`);
+    // 使用實際的容器 ID，如果沒有提供則回退到預設邏輯
+    const actualContainerId = projectContext.containerId || projectContext.projectId;
+    const dockerContext = createDefaultDockerContext(
+      actualContainerId, 
+      `ai-dev-${projectContext.projectName}`,
+      projectContext.projectName
+    );
     this.toolkit = createDockerToolkit(dockerContext);
   }
 

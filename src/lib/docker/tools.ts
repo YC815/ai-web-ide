@@ -648,14 +648,38 @@ export class DockerHealthCheckTool {
 }
 
 // Docker 容器檔案系統工具
+import { DockerSecurityValidator } from '../ai/docker-security-validator';
+
 export class DockerFileSystemTool {
-  constructor(private dockerContext: DockerContext) {}
+  private securityValidator: DockerSecurityValidator;
+  
+  constructor(
+    private dockerContext: DockerContext, 
+    private projectName?: string
+  ) {
+    this.securityValidator = DockerSecurityValidator.getInstance();
+  }
 
   /**
-   * 讀取Docker容器內的檔案
+   * 讀取Docker容器內的檔案（需安全驗證）
    */
   async readFile(filePath: string): Promise<DockerToolResponse<string>> {
     try {
+      // 安全驗證
+      const validation = this.securityValidator.validateFilePath(
+        filePath, 
+        this.dockerContext, 
+        this.projectName
+      );
+      
+      if (!validation.isValid) {
+        return {
+          success: false,
+          error: `安全驗證失敗: ${validation.reason}`,
+          message: validation.suggestedPath ? `建議路徑: ${validation.suggestedPath}` : undefined
+        };
+      }
+      
       const result = await this.executeInContainer([
         'cat', filePath
       ]);
@@ -675,10 +699,25 @@ export class DockerFileSystemTool {
   }
 
   /**
-   * 寫入檔案到Docker容器內
+   * 寫入檔案到Docker容器內（需安全驗證）
    */
   async writeFile(filePath: string, content: string): Promise<DockerToolResponse<string>> {
     try {
+      // 安全驗證
+      const validation = this.securityValidator.validateFilePath(
+        filePath, 
+        this.dockerContext, 
+        this.projectName
+      );
+      
+      if (!validation.isValid) {
+        return {
+          success: false,
+          error: `安全驗證失敗: ${validation.reason}`,
+          message: validation.suggestedPath ? `建議路徑: ${validation.suggestedPath}` : undefined
+        };
+      }
+      
       const result = await this.executeInContainer([
         'sh', '-c', `echo '${content.replace(/'/g, "'\\''")}' > ${filePath}`
       ]);
@@ -698,7 +737,7 @@ export class DockerFileSystemTool {
   }
 
   /**
-   * 列出Docker容器內目錄內容
+   * 列出Docker容器內目錄內容（需安全驗證）
    */
   async listDirectory(dirPath: string = '.', options?: { 
     recursive?: boolean; 
@@ -708,8 +747,23 @@ export class DockerFileSystemTool {
     try {
       const { recursive = false, showHidden = false, useTree = false } = options || {};
       
-      // 驗證路徑安全性
-      const safeDirPath = this.sanitizePath(dirPath);
+      // 安全驗證
+      const validation = this.securityValidator.validateDirectoryPath(
+        dirPath, 
+        this.dockerContext, 
+        this.projectName
+      );
+      
+      if (!validation.isValid) {
+        return {
+          success: false,
+          error: `安全驗證失敗: ${validation.reason}`,
+          message: validation.suggestedPath ? `建議路徑: ${validation.suggestedPath}` : undefined
+        };
+      }
+      
+      // 路徑已經通過安全驗證，不需要再次處理
+      const safeDirPath = dirPath;
       
       let command: string[];
       
@@ -823,8 +877,8 @@ export class DockerFileSystemTool {
    */
   async showDirectoryTree(dirPath: string = '.', maxDepth?: number): Promise<DockerToolResponse<string>> {
     try {
-      // 驗證路徑安全性
-      const safeDirPath = this.sanitizePath(dirPath);
+      // 路徑已經通過安全驗證，不需要再次處理
+      const safeDirPath = dirPath;
       
       // 限制最大深度，防止輸出過大
       const safeMaxDepth = maxDepth ? Math.min(maxDepth, 5) : 3;
@@ -950,11 +1004,11 @@ export class DockerToolkit {
   public healthCheck: DockerHealthCheckTool;
   public fileSystem: DockerFileSystemTool;
 
-  constructor(dockerContext: DockerContext) {
+  constructor(dockerContext: DockerContext, projectName?: string) {
     this.devServer = new DockerDevServerTool(dockerContext);
     this.logMonitor = new DockerLogMonitorTool(dockerContext);
     this.healthCheck = new DockerHealthCheckTool(dockerContext);
-    this.fileSystem = new DockerFileSystemTool(dockerContext);
+    this.fileSystem = new DockerFileSystemTool(dockerContext, projectName);
   }
 
   /**
@@ -1048,18 +1102,36 @@ export class DockerToolkit {
 }
 
 /**
- * 創建Docker工具實例的工廠函數
+ * 創建Docker工具實例的工廠函數（專案工作區模式）
  */
-export function createDockerToolkit(dockerContext: DockerContext): DockerToolkit {
-  return new DockerToolkit(dockerContext);
+export function createDockerToolkit(dockerContext: DockerContext, projectName?: string): DockerToolkit {
+  return new DockerToolkit(dockerContext, projectName);
 }
 
 /**
- * 創建預設Docker上下文配置
+ * 標準化專案名稱：將短橫線轉換為底線
+ */
+function normalizeProjectName(projectName: string): string {
+  return projectName.replace(/-/g, '_');
+}
+
+/**
+ * 創建預設Docker上下文配置（嚴格限制在專案工作區）
  */
 export function createDefaultDockerContext(containerId: string, containerName?: string, projectName?: string): DockerContext {
-  // 如果有專案名稱，使用專案特定的工作目錄
-  const workingDirectory = projectName ? `/app/workspace/${projectName}` : '/app';
+  // 標準化專案名稱並強制使用專案工作區路徑
+  const normalizedProjectName = projectName ? normalizeProjectName(projectName) : null;
+  const workingDirectory = normalizedProjectName 
+    ? `/app/workspace/${normalizedProjectName}` 
+    : '/app/workspace';
+  
+  console.log(`🐳 創建 Docker 上下文:`, {
+    containerId: containerId.substring(0, 12),
+    containerName: containerName || `ai-dev-${containerId.substring(0, 12)}`,
+    workingDirectory,
+    originalProjectName: projectName,
+    normalizedProjectName
+  });
   
   return {
     containerId,

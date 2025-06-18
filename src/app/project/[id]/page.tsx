@@ -57,14 +57,76 @@ async function getProject(id: string): Promise<Project | null> {
   }
 }
 
+// 檢查並自動啟動容器的函數
+async function checkAndStartContainer(containerId: string): Promise<{ success: boolean; message: string }> {
+  try {
+    console.log(`[ProjectPage] 檢查容器狀態: ${containerId}`);
+    
+    // 檢查容器狀態
+    const statusResponse = await fetch('/api/docker', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'status',
+        containerId: containerId
+      })
+    });
+    
+    const statusResult = await statusResponse.json();
+    console.log(`[ProjectPage] 容器狀態檢查結果:`, statusResult);
+    
+    if (statusResult.success) {
+      const containerStatus = statusResult.status;
+      
+      if (containerStatus === 'running') {
+        console.log(`[ProjectPage] 容器已在運行`);
+        return { success: true, message: '容器已在運行' };
+      } else {
+        console.log(`[ProjectPage] 容器未運行 (${containerStatus})，嘗試啟動...`);
+        
+        // 啟動容器
+        const startResponse = await fetch('/api/docker', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'start',
+            containerId: containerId
+          })
+        });
+        
+        const startResult = await startResponse.json();
+        console.log(`[ProjectPage] 容器啟動結果:`, startResult);
+        
+        if (startResult.success) {
+          // 等待容器完全啟動
+          await new Promise(resolve => setTimeout(resolve, 3000));
+          return { success: true, message: '容器已成功啟動' };
+        } else {
+          return { success: false, message: `容器啟動失敗: ${startResult.error}` };
+        }
+      }
+    } else {
+      return { success: false, message: `無法檢查容器狀態: ${statusResult.error}` };
+    }
+  } catch (error) {
+    console.error('[ProjectPage] 檢查/啟動容器失敗:', error);
+    return { 
+      success: false, 
+      message: `檢查/啟動容器失敗: ${error instanceof Error ? error.message : '未知錯誤'}` 
+    };
+  }
+}
+
 export default function ProjectPage({ params }: Props) {
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'chat' | 'todo'>('chat');
   const [error, setError] = useState<string | null>(null);
+  const [containerStatus, setContainerStatus] = useState<string>('');
+  const [isStartingContainer, setIsStartingContainer] = useState(false);
 
   
-  // 載入專案資訊
+  // 載入專案資訊並檢查容器狀態
   useEffect(() => {
     const loadProject = async () => {
       try {
@@ -84,6 +146,23 @@ export default function ProjectPage({ params }: Props) {
         if (projectData) {
           setProject(projectData);
           console.log(`[ProjectPage] 專案載入成功: ${projectData.name}`);
+          
+          // 自動檢查並啟動容器
+          setIsStartingContainer(true);
+          setContainerStatus('正在檢查容器狀態...');
+          
+          const containerResult = await checkAndStartContainer(projectData.containerId);
+          setContainerStatus(containerResult.message);
+          
+          if (containerResult.success) {
+            // 更新專案狀態為運行中
+            setProject(prev => prev ? { ...prev, status: 'running' } : null);
+            console.log(`[ProjectPage] 容器檢查/啟動成功: ${containerResult.message}`);
+          } else {
+            console.error(`[ProjectPage] 容器檢查/啟動失敗: ${containerResult.message}`);
+          }
+          
+          setIsStartingContainer(false);
         } else {
           console.log(`[ProjectPage] 專案未找到: ${projectId}`);
           setError(`專案未找到: ${projectId}`);
@@ -107,6 +186,11 @@ export default function ProjectPage({ params }: Props) {
         <div className="text-center">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
           <span className="mt-2 text-gray-600 dark:text-gray-400">載入專案中...</span>
+          {isStartingContainer && (
+            <div className="mt-4 text-sm text-blue-600 dark:text-blue-400">
+              {containerStatus}
+            </div>
+          )}
           <div className="mt-4 text-xs text-gray-500">
             檢查 console 查看詳細載入過程
           </div>
@@ -182,6 +266,13 @@ export default function ProjectPage({ params }: Props) {
                   {project.status === 'running' ? '🟢 運行中' : 
                    project.status === 'stopped' ? '⚪ 已停止' : '🔴 錯誤'}
                 </div>
+                
+                {/* 容器狀態訊息 */}
+                {containerStatus && (
+                  <div className="text-xs text-blue-600 dark:text-blue-400">
+                    {containerStatus}
+                  </div>
+                )}
               </div>
             </div>
             

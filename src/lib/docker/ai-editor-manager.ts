@@ -566,13 +566,22 @@ export class DockerAIEditorManager {
           knownWorkingDirectory: knownContext.workingDirectory
         });
         
-        // 如果工作目錄不匹配，更新配置
+        // 如果工作目錄不匹配，檢查是否需要更新配置
         if (this.config.dockerContext.workingDirectory !== knownContext.workingDirectory) {
-          this.logger.info('Updating Docker context working directory', {
-            oldWorkingDirectory: this.config.dockerContext.workingDirectory,
-            newWorkingDirectory: knownContext.workingDirectory
-          });
-          this.config.dockerContext.workingDirectory = knownContext.workingDirectory;
+          // 只在當前工作目錄是預設值（/app）時才更新
+          // 如果已經設定了專案特定的工作目錄，則保持不變
+          if (this.config.dockerContext.workingDirectory === '/app') {
+            this.logger.info('Updating Docker context working directory from default', {
+              oldWorkingDirectory: this.config.dockerContext.workingDirectory,
+              newWorkingDirectory: knownContext.workingDirectory
+            });
+            this.config.dockerContext.workingDirectory = knownContext.workingDirectory;
+          } else {
+            this.logger.debug('Keeping existing project-specific working directory', {
+              currentWorkingDirectory: this.config.dockerContext.workingDirectory,
+              knownWorkingDirectory: knownContext.workingDirectory
+            });
+          }
         }
         
         return true;

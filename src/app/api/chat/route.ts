@@ -2,10 +2,29 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAIProjectAssistant } from './ai-project-assistant';
 import { createLangchainChatEngine, LangchainChatResponse } from '../../../lib/ai/langchain-chat-engine';
 
+// 專案名稱標準化函數 - 將前端的專案名稱映射到容器內的實際目錄名稱
+function normalizeProjectName(projectName: string, containerId?: string): string {
+  // 如果有容器 ID，嘗試從容器名稱提取正確的專案名稱
+  if (containerId && containerId.includes('ai-web-ide-')) {
+    const match = containerId.match(/^ai-web-ide-(.+?)-\d+$/);
+    if (match) {
+      // 將短橫線轉換為底線，這是容器內實際的目錄格式
+      return match[1].replace(/-/g, '_');
+    }
+  }
+  
+  // 如果無法從容器 ID 提取，則標準化專案名稱
+  return projectName
+    .toLowerCase()
+    .replace(/\s+/g, '_')  // 空格轉為底線
+    .replace(/-/g, '_');   // 短橫線轉為底線
+}
+
 export interface ChatRequest {
   message: string;
   projectId: string;
   projectName?: string;
+  containerId?: string; // Docker 容器 ID
   conversationId?: string;
   useFullPrompt?: boolean; // 是否使用完整提示詞（預設為 true）
   autoRepairMode?: boolean; // 是否啟用自動修正模式
@@ -87,6 +106,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatRespo
       message, 
       projectId, 
       projectName, 
+      containerId,
       conversationId, 
       useFullPrompt = true, 
       autoRepairMode = false,
@@ -132,12 +152,18 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatRespo
         langchainEngines.set(engineKey, chatEngine);
       }
 
+      // 標準化專案名稱以匹配容器內的實際目錄結構
+      const normalizedProjectName = normalizeProjectName(projectName || projectId, containerId);
+      
       // 建構專案上下文
       const projectContext = {
         projectId,
-        projectName: projectName || 'Unknown Project',
+        projectName: normalizedProjectName, // 使用標準化的專案名稱
+        containerId: containerId || `ai-web-ide-${projectName || projectId}`, // 使用更智能的容器 ID 推導
         containerStatus: 'running' as const
       };
+      
+      console.log(`🔧 專案名稱標準化: "${projectName}" -> "${normalizedProjectName}" (容器: ${containerId})`);;
 
       // 使用 Langchain 引擎處理訊息
       const langchainResponse: LangchainChatResponse = await chatEngine.processMessage(

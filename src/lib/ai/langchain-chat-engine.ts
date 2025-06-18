@@ -35,6 +35,7 @@ import { Document } from "@langchain/core/documents";
 // 引入現有的工具和上下文管理
 import { createAIContextManager, ProjectContext, ProjectSnapshot } from './context-manager';
 import { createDockerToolkit, DockerToolkit, createDefaultDockerContext } from '../docker/tools';
+import { DockerSecurityValidator } from './docker-security-validator';
 
 // 嚴格定義類型，替換 any
 export interface ToolCallResult {
@@ -114,6 +115,7 @@ export class LangchainChatEngine {
   private sessions = new Map<string, ChatSession>();
   private model: ChatOpenAI;
   private embeddings: OpenAIEmbeddings;
+  private securityValidator: DockerSecurityValidator;
   private maxRetries = 3;
   private contextWindow = 20; // 保留最近 20 條訊息
 
@@ -132,6 +134,8 @@ export class LangchainChatEngine {
     this.embeddings = new OpenAIEmbeddings({
       openAIApiKey: apiKey,
     });
+
+    this.securityValidator = DockerSecurityValidator.getInstance();
   }
 
   /**
@@ -296,6 +300,14 @@ export class LangchainChatEngine {
     if (days > 0) return `${days}天${hours % 24}小時`;
     if (hours > 0) return `${hours}小時${minutes % 60}分鐘`;
     return `${minutes}分鐘`;
+  }
+
+  /**
+   * 標準化專案名稱：將短橫線轉換為底線
+   * 這是因為容器內的實際目錄使用底線格式
+   */
+  private normalizeProjectName(projectName: string): string {
+    return projectName.replace(/-/g, '_');
   }
 
   /**
@@ -548,102 +560,52 @@ export class LangchainChatEngine {
   }
 
   /**
-   * 創建專案工具
+   * 創建專案工具 - 修正版本
    */
   private async createProjectTools(projectContext: ProjectContext): Promise<Tool[]> {
     const contextManager = createAIContextManager(projectContext);
+    
+    // 使用實際的容器 ID，如果沒有提供則回退到預設邏輯
+    const actualContainerId = projectContext.containerId || projectContext.projectId;
+    
+    // 標準化專案名稱 - 處理不同的命名格式
+    let normalizedProjectName = projectContext.projectName || projectContext.projectId;
+    
+    // 從容器 ID 中提取專案名稱（如果容器 ID 包含專案資訊）
+    if (actualContainerId && actualContainerId.includes('ai-web-ide-')) {
+      const match = actualContainerId.match(/^ai-web-ide-(.+?)-\d+$/);
+      if (match) {
+        // 將短橫線轉換為底線，這是容器內實際的目錄格式
+        normalizedProjectName = this.normalizeProjectName(match[1]);
+        console.log(`🔄 從容器 ID 提取專案名稱: ${match[1]} -> ${normalizedProjectName}`);
+      }
+    } else if (normalizedProjectName) {
+      // 確保專案名稱使用正確格式
+      normalizedProjectName = this.normalizeProjectName(normalizedProjectName);
+      console.log(`🔧 標準化專案名稱: ${projectContext.projectName || projectContext.projectId} -> ${normalizedProjectName}`);
+    }
+
+    // 創建 Docker 上下文，強制使用正確的工作目錄
     const dockerContext = createDefaultDockerContext(
-      `${projectContext.projectId}-container`, 
-      `ai-dev-${projectContext.projectName}`,
-      projectContext.projectName  // 傳入專案名稱設定工作目錄
+      actualContainerId, 
+      `ai-dev-${normalizedProjectName}`,
+      normalizedProjectName  // 傳入標準化的專案名稱
     );
-    const toolkit = createDockerToolkit(dockerContext);
+    
+    console.log(`🐳 創建 Docker 上下文:`, {
+      containerId: dockerContext.containerId,
+      containerName: dockerContext.containerName,
+      workingDirectory: dockerContext.workingDirectory,
+      projectName: normalizedProjectName
+    });
+    
+    const toolkit = createDockerToolkit(dockerContext, normalizedProjectName);
+    
+    // 配置安全驗證器的專案名稱
+    this.securityValidator.setProjectName(normalizedProjectName);
 
     const tools: Tool[] = [
-      new DynamicTool({
-        name: "comprehensive_project_exploration",
-        description: "進行完整的專案探索 - 自動深度掃描所有重要目錄和配置檔案。當用戶要求查看專案結構時使用此工具",
-        func: async () => {
-          const exploration = await this.performComprehensiveExploration(toolkit, projectContext.projectName);
-          return exploration;
-        }
-      }),
-
-      new DynamicTool({
-        name: "list_directory",
-        description: "列出指定目錄的內容，用於探索檔案結構。路徑相對於專案根目錄",
-        func: async (path: string) => {
-          const result = await toolkit.fileSystem.listDirectory(path || './');
-          return result.success ? `目錄 ${path || './'} 內容:\n${result.data?.join('\n') || '空目錄'}` : result.error || '無法列出目錄';
-        }
-      }),
-
-      new DynamicTool({
-        name: "get_project_snapshot",
-        description: "獲取當前專案的完整快照，包含檔案結構、依賴、Git 狀態等",
-        func: async () => {
-          const result = await contextManager.getProjectSnapshot(true);
-          return result.success ? JSON.stringify(result.data, null, 2) : result.error || '無法獲取專案快照';
-        }
-      }),
-
-      new DynamicTool({
-        name: "project_exploration",
-        description: "深度探索和分析專案，生成詳細報告和建議",
-        func: async () => {
-          const report = await contextManager.generateAIProjectReport();
-          const suggestions = await contextManager.getSmartSuggestions();
-          return `專案報告:\n${report}\n\n建議:\n${suggestions.data?.join('\n') || '無建議'}`;
-        }
-      }),
-
-      new DynamicTool({
-        name: "initialize_project",
-        description: "初始化或確保專案已正確設置",
-        func: async () => {
-          // 檢查專案基本檔案是否存在
-          const basePath = `app/workspace/${projectContext.projectName}`;
-          const packageJsonResult = await toolkit.fileSystem.readFile(`${basePath}/package.json`);
-          if (packageJsonResult.success) {
-            return `✅ 專案已初始化（在 ${basePath} 找到 package.json）`;
-          } else {
-            return `⚠️ 專案可能尚未初始化（在 ${basePath} 找不到 package.json）`;
-          }
-        }
-      }),
-
-      new DynamicTool({
-        name: "create_file",
-        description: "創建新檔案，輸入格式: path|content。路徑相對於專案根目錄",
-        func: async (input: string) => {
-          const [path, content] = input.split('|');
-          if (!path || content === undefined) {
-            return '❌ 輸入格式錯誤，請使用: path|content';
-          }
-          const result = await toolkit.fileSystem.writeFile(path, content);
-          return result.success ? `✅ 檔案 ${path} 創建成功` : result.error || '創建檔案失敗';
-        }
-      }),
-
-      new DynamicTool({
-        name: "read_file",
-        description: "讀取檔案內容。路徑相對於專案根目錄",
-        func: async (path: string) => {
-          const result = await toolkit.fileSystem.readFile(path);
-          return result.success ? result.data || '檔案為空' : result.error || '讀取檔案失敗';
-        }
-      }),
-
-      new DynamicTool({
-        name: "execute_command",
-        description: "在容器中執行命令",
-        func: async (command: string) => {
-          // DockerToolkit 沒有直接的 executeCommand 方法，需要通過其他方式實現
-          return `⚠️ 命令執行功能暫未實現: ${command}`;
-        }
-      }),
-
-      // 創建專案路徑檢測工具
+      // 創建專案路徑檢測工具 - 優先級最高
       new DynamicTool({
         name: "detect_project_path",
         description: `自動檢測當前專案的根目錄路徑。
@@ -659,7 +621,6 @@ export class LangchainChatEngine {
         - 開始任何專案操作前`,
         func: async () => {
           try {
-            const toolkit = await createDockerToolkit(dockerContext);
             const projectPath = await this.detectProjectPath(toolkit);
             const projectInfo = await this.getProjectInfo(toolkit, projectPath);
             
@@ -667,12 +628,22 @@ export class LangchainChatEngine {
               success: true,
               projectPath,
               projectInfo,
+              dockerContext: {
+                containerId: dockerContext.containerId,
+                containerName: dockerContext.containerName,
+                workingDirectory: dockerContext.workingDirectory
+              },
               message: `✅ 專案路徑檢測完成\n路徑: ${projectPath}\n名稱: ${projectInfo.name}\n版本: ${projectInfo.version || 'N/A'}`
             }, null, 2);
           } catch (error) {
             return JSON.stringify({
               success: false,
               error: error instanceof Error ? error.message : 'Unknown error',
+              dockerContext: {
+                containerId: dockerContext.containerId,
+                containerName: dockerContext.containerName,
+                workingDirectory: dockerContext.workingDirectory
+              },
               message: `❌ 專案路徑檢測失敗: ${error instanceof Error ? error.message : 'Unknown error'}`
             }, null, 2);
           }
@@ -699,12 +670,115 @@ export class LangchainChatEngine {
         絕不能只用 list_directory 工具敷衍了事！`,
         func: async () => {
           try {
-            const toolkit = await createDockerToolkit(dockerContext);
-            const explorationResult = await this.performComprehensiveExploration(toolkit);
+            const explorationResult = await this.performComprehensiveExploration(toolkit, normalizedProjectName);
             return `✅ 完整專案探索完成\n\n${explorationResult}`;
           } catch (error) {
             return `❌ 專案探索失敗: ${error instanceof Error ? error.message : 'Unknown error'}`;
           }
+        }
+      }),
+
+      new DynamicTool({
+        name: "list_directory",
+        description: "列出指定目錄的內容，用於探索檔案結構。路徑相對於專案根目錄。如果路徑為空，將自動檢測專案根目錄。",
+        func: async (path: string) => {
+          try {
+            // 如果沒有提供路徑，自動檢測專案根目錄
+            let targetPath = path;
+            if (!path || path === '.' || path === './') {
+              const detectedPath = await this.detectProjectPath(toolkit);
+              targetPath = detectedPath === './' ? '.' : detectedPath;
+              console.log(`🎯 自動檢測到專案根目錄: ${targetPath}`);
+            }
+            
+            const result = await toolkit.fileSystem.listDirectory(targetPath);
+            if (result.success && result.data) {
+              return `目錄 ${targetPath} 內容:\n${result.data.join('\n')}`;
+            } else {
+              return `❌ 無法列出目錄 ${targetPath}: ${result.error || '未知錯誤'}`;
+            }
+          } catch (error) {
+            return `❌ 列出目錄時出錯: ${error instanceof Error ? error.message : 'Unknown error'}`;
+          }
+        }
+      }),
+
+      new DynamicTool({
+        name: "get_project_snapshot",
+        description: "獲取當前專案的完整快照，包含檔案結構、依賴、Git 狀態等",
+        func: async () => {
+          const result = await contextManager.getProjectSnapshot(true);
+          return result.success ? JSON.stringify(result.data, null, 2) : result.error || '無法獲取專案快照';
+        }
+      }),
+
+      new DynamicTool({
+        name: "project_exploration",
+        description: "深度探索和分析專案，生成詳細報告和建議",
+        func: async () => {
+          const report = await contextManager.generateAIProjectReport();
+          const suggestions = await contextManager.getSmartSuggestions();
+          return `專案報告:\n${report}\n\n建議:\n${suggestions.data?.join('\n') || '無建議'}`;
+        }
+      }),
+
+      new DynamicTool({
+        name: "initialize_project",
+        description: "初始化或確保專案已正確設置",
+        func: async () => {
+          try {
+            // 先檢測專案路徑
+            const projectPath = await this.detectProjectPath(toolkit);
+            const packageJsonPath = projectPath === './' ? 'package.json' : `${projectPath}/package.json`;
+            
+            const packageJsonResult = await toolkit.fileSystem.readFile(packageJsonPath);
+            if (packageJsonResult.success) {
+              return `✅ 專案已初始化（在 ${projectPath} 找到 package.json）`;
+            } else {
+              return `⚠️ 專案可能尚未初始化（在 ${projectPath} 找不到 package.json）`;
+            }
+          } catch (error) {
+            return `❌ 檢查專案初始化狀態時出錯: ${error instanceof Error ? error.message : 'Unknown error'}`;
+          }
+        }
+      }),
+
+      new DynamicTool({
+        name: "create_file",
+        description: "創建新檔案，輸入格式: path|content。路徑相對於專案根目錄",
+        func: async (input: string) => {
+          const [path, content] = input.split('|');
+          if (!path || content === undefined) {
+            return '❌ 輸入格式錯誤，請使用: path|content';
+          }
+          
+          try {
+            const result = await toolkit.fileSystem.writeFile(path, content);
+            return result.success ? `✅ 檔案 ${path} 創建成功` : `❌ 創建檔案失敗: ${result.error}`;
+          } catch (error) {
+            return `❌ 創建檔案時出錯: ${error instanceof Error ? error.message : 'Unknown error'}`;
+          }
+        }
+      }),
+
+      new DynamicTool({
+        name: "read_file",
+        description: "讀取檔案內容。路徑相對於專案根目錄",
+        func: async (path: string) => {
+          try {
+            const result = await toolkit.fileSystem.readFile(path);
+            return result.success ? (result.data || '檔案為空') : `❌ 讀取檔案失敗: ${result.error}`;
+          } catch (error) {
+            return `❌ 讀取檔案時出錯: ${error instanceof Error ? error.message : 'Unknown error'}`;
+          }
+        }
+      }),
+
+      new DynamicTool({
+        name: "execute_command",
+        description: "在容器中執行命令（功能開發中）",
+        func: async (command: string) => {
+          return `⚠️ 命令執行功能暫未實現: ${command}\n\n建議使用其他可用的工具來完成您的任務。`;
         }
       }),
 
@@ -732,8 +806,6 @@ export class LangchainChatEngine {
         - 用戶要求查看配置檔案`,
         func: async (input: string) => {
           try {
-            const toolkit = await createDockerToolkit(dockerContext);
-            
             // 從輸入中提取檔案名稱
             const fileName = this.extractFileName(input);
             if (!fileName) {
@@ -742,53 +814,116 @@ export class LangchainChatEngine {
             
             const searchResult = await this.performIntelligentFileSearch(toolkit, fileName);
             return searchResult;
-            
           } catch (error) {
-            return `❌ 檔案搜尋失敗: ${error instanceof Error ? error.message : 'Unknown error'}`;
+            return `❌ 智能檔案搜尋失敗: ${error instanceof Error ? error.message : 'Unknown error'}`;
           }
         }
       })
     ];
 
+    console.log(`🔧 創建了 ${tools.length} 個專案工具`);
     return tools;
   }
 
   /**
-   * 自動檢測專案根目錄路徑
+   * 自動檢測專案根目錄路徑 - 修正版本
    */
   private async detectProjectPath(toolkit: any): Promise<string> {
+    console.log('🔍 開始檢測專案路徑...');
+    
     try {
-      // 嘗試在當前目錄查找 package.json
-      const result = await toolkit.fileSystem.readFile('./package.json');
-      if (result.success) {
+      // 1. 首先嘗試當前工作目錄
+      console.log('📁 檢查當前工作目錄是否包含 package.json...');
+      const currentDirResult = await toolkit.fileSystem.readFile('./package.json');
+      if (currentDirResult.success) {
+        console.log('✅ 在當前目錄找到 package.json');
         return './';
       }
+      console.log('❌ 當前目錄未找到 package.json');
     } catch (error) {
-      // 繼續尋找
+      console.log('❌ 檢查當前目錄時出錯:', error);
     }
 
     try {
-      // 如果在 Docker 容器中，嘗試工作目錄
-      const workspaceResult = await toolkit.fileSystem.listDirectory('/app/workspace/');
-      if (workspaceResult.success && workspaceResult.data) {
-        // 嘗試找到包含 package.json 的專案目錄
-        for (const item of workspaceResult.data) {
+      // 2. 檢查 /app 目錄是否包含 package.json
+      console.log('📁 檢查 /app 目錄...');
+      const appDirResult = await toolkit.fileSystem.readFile('/app/package.json');
+      if (appDirResult.success) {
+        console.log('✅ 在 /app 目錄找到 package.json');
+        return '/app';
+      }
+      console.log('❌ /app 目錄未找到 package.json');
+    } catch (error) {
+      console.log('❌ 檢查 /app 目錄時出錯:', error);
+    }
+
+    try {
+      // 3. 探索 /app/workspace 目錄下的所有子目錄
+      console.log('📁 探索 /app/workspace 目錄...');
+      const workspaceResult = await toolkit.fileSystem.listDirectory('/app/workspace');
+      
+      if (workspaceResult.success && workspaceResult.data && workspaceResult.data.length > 0) {
+        console.log(`📂 找到 ${workspaceResult.data.length} 個工作區目錄:`, workspaceResult.data);
+        
+        // 嘗試每個子目錄
+        for (const subDir of workspaceResult.data) {
           try {
-            const projectPath = `/app/workspace/${item}`;
+            const projectPath = `/app/workspace/${subDir}`;
+            console.log(`🔍 檢查專案目錄: ${projectPath}`);
+            
             const packageResult = await toolkit.fileSystem.readFile(`${projectPath}/package.json`);
             if (packageResult.success) {
+              console.log(`✅ 在 ${projectPath} 找到 package.json`);
+              return projectPath;
+            } else {
+              console.log(`❌ ${projectPath} 未找到 package.json`);
+            }
+          } catch (error) {
+            console.log(`❌ 檢查 ${subDir} 時出錯:`, error);
+          }
+        }
+      } else {
+        console.log('❌ /app/workspace 目錄為空或不存在');
+      }
+    } catch (error) {
+      console.log('❌ 探索 /app/workspace 時出錯:', error);
+    }
+
+    try {
+      // 4. 最後嘗試直接使用專案名稱構建路徑
+      const projectContext = this.sessions.values().next().value?.projectContext;
+      if (projectContext?.projectName) {
+        // 嘗試多種專案名稱格式，重點是標準化的底線格式
+        const projectNameVariants = [
+          this.normalizeProjectName(projectContext.projectName), // 優先使用標準化格式
+          projectContext.projectName,
+          projectContext.projectName.replace(/_/g, '-'), // 底線轉短橫線
+          projectContext.projectName.toLowerCase(),
+          this.normalizeProjectName(projectContext.projectName.toLowerCase()),
+          projectContext.projectName.toLowerCase().replace(/_/g, '-')
+        ];
+
+        for (const variant of projectNameVariants) {
+          try {
+            const projectPath = `/app/workspace/${variant}`;
+            console.log(`🔍 嘗試專案名稱變體: ${projectPath}`);
+            
+            const packageResult = await toolkit.fileSystem.readFile(`${projectPath}/package.json`);
+            if (packageResult.success) {
+              console.log(`✅ 使用專案名稱變體找到路徑: ${projectPath}`);
               return projectPath;
             }
           } catch (error) {
-            // 繼續尋找下一個
+            // 繼續嘗試下一個變體
           }
         }
       }
     } catch (error) {
-      // 繼續尋找
+      console.log('❌ 使用專案名稱構建路徑時出錯:', error);
     }
 
-    // 預設回到當前目錄
+    // 5. 如果都失敗了，回退到當前目錄
+    console.log('⚠️ 所有路徑檢測都失敗，回退到當前目錄');
     return './';
   }
 
@@ -815,26 +950,39 @@ export class LangchainChatEngine {
   }
 
   /**
-   * 完整專案探索 - 改進版本
+   * 完整專案探索 - 修正版本
    */
   private async performComprehensiveExploration(toolkit: any, projectName?: string): Promise<string> {
     const explorationResults: string[] = [];
+    
+    console.log(`🔍 開始專案探索，專案名稱: ${projectName}`);
     
     // 自動檢測專案路徑
     const projectPath = await this.detectProjectPath(toolkit);
     const projectInfo = await this.getProjectInfo(toolkit, projectPath);
     
-    // 定義要探索的目錄（相對於專案根目錄）
+    console.log(`📍 檢測到專案路徑: ${projectPath}`);
+    console.log(`📦 專案資訊:`, projectInfo);
+    
+    // 定義要探索的目錄（基於檢測到的專案路徑）
+    const getDirectoryPath = (subDir: string) => {
+      if (!subDir) return projectPath;
+      if (projectPath === './') return subDir;
+      return `${projectPath}/${subDir}`.replace(/\/+/g, '/');
+    };
+
     const directoriesToExplore = [
-      '',  // 根目錄
-      'src',
-      'src/app',
-      'src/lib',
-      'src/components',
-      'pages',
-      'public',
-      'docs',
-      'tests'
+      { path: '', displayName: '根目錄' },
+      { path: 'src', displayName: 'src' },
+      { path: 'src/app', displayName: 'src/app' },
+      { path: 'src/lib', displayName: 'src/lib' },
+      { path: 'src/components', displayName: 'src/components' },
+      { path: 'app', displayName: 'app' },
+      { path: 'pages', displayName: 'pages' },
+      { path: 'public', displayName: 'public' },
+      { path: 'docs', displayName: 'docs' },
+      { path: 'tests', displayName: 'tests' },
+      { path: '__tests__', displayName: '__tests__' }
     ];
 
     // 關鍵檔案
@@ -844,12 +992,16 @@ export class LangchainChatEngine {
       'next.config.js',
       'next.config.ts',
       'tailwind.config.js',
+      'tailwind.config.ts',
       'README.md',
-      '.gitignore'
+      '.gitignore',
+      '.env.local',
+      '.env.example'
     ];
 
-    explorationResults.push(`🔍 開始完整專案探索`);
-    explorationResults.push(`📍 專案路徑: ${projectPath}`);
+    explorationResults.push(`🔍 完整專案探索報告`);
+    explorationResults.push(`${'='.repeat(50)}`);
+    explorationResults.push(`📍 檢測路徑: ${projectPath}`);
     explorationResults.push(`📦 專案名稱: ${projectInfo.name}`);
     if (projectInfo.description) {
       explorationResults.push(`📝 專案描述: ${projectInfo.description}`);
@@ -860,93 +1012,204 @@ export class LangchainChatEngine {
     explorationResults.push('');
 
     // 1. 探索目錄結構
-    explorationResults.push('📁 目錄結構:');
-    for (const dir of directoriesToExplore) {
+    explorationResults.push('📁 目錄結構探索:');
+    explorationResults.push(`${'─'.repeat(30)}`);
+    
+    let foundDirectories = 0;
+    let totalFiles = 0;
+    
+    for (const dirInfo of directoriesToExplore) {
       try {
-        const fullPath = dir ? `${projectPath}/${dir}`.replace(/\/+/g, '/') : projectPath;
+        const fullPath = getDirectoryPath(dirInfo.path);
+        console.log(`🔍 探索目錄: ${fullPath}`);
+        
         const result = await toolkit.fileSystem.listDirectory(fullPath);
         if (result.success && result.data && result.data.length > 0) {
-          const displayPath = dir || '(根目錄)';
-          explorationResults.push(`\n📂 ${displayPath}:`);
-          result.data.forEach((item: string) => {
-            explorationResults.push(`  ├── ${item}`);
-          });
+          foundDirectories++;
+          totalFiles += result.data.length;
+          
+          explorationResults.push(`\n📂 ${dirInfo.displayName} (${result.data.length} 項目):`);
+          
+          // 按類型分類顯示
+          const files = result.data.filter((item: string) => item.includes('.'));
+          const dirs = result.data.filter((item: string) => !item.includes('.'));
+          
+          if (dirs.length > 0) {
+            explorationResults.push(`  📁 目錄: ${dirs.slice(0, 10).join(', ')}${dirs.length > 10 ? ` (+${dirs.length - 10} 更多)` : ''}`);
+          }
+          
+          if (files.length > 0) {
+            explorationResults.push(`  📄 檔案: ${files.slice(0, 10).join(', ')}${files.length > 10 ? ` (+${files.length - 10} 更多)` : ''}`);
+          }
+        } else {
+          console.log(`❌ 目錄 ${fullPath} 不存在或為空`);
         }
       } catch (error) {
-        // 目錄不存在時跳過
+        console.log(`❌ 探索目錄 ${dirInfo.path} 時出錯:`, error);
       }
     }
 
+    explorationResults.push(`\n📊 目錄統計: 找到 ${foundDirectories} 個目錄，共 ${totalFiles} 個項目`);
+
     // 2. 讀取關鍵檔案
-    explorationResults.push('\n\n📄 關鍵配置檔案:');
+    explorationResults.push('\n\n📄 關鍵配置檔案分析:');
+    explorationResults.push(`${'─'.repeat(30)}`);
+    
+    let foundFiles = 0;
+    
     for (const file of keyFiles) {
       try {
-        const filePath = `${projectPath}/${file}`.replace(/\/+/g, '/');
+        const filePath = getDirectoryPath(file);
+        console.log(`🔍 讀取檔案: ${filePath}`);
+        
         const result = await toolkit.fileSystem.readFile(filePath);
         if (result.success && result.data) {
+          foundFiles++;
           explorationResults.push(`\n🔧 ${file}:`);
           
           if (file === 'package.json') {
             // 解析 package.json 顯示重要資訊
             try {
               const packageData = JSON.parse(result.data);
-              explorationResults.push(`  名稱: ${packageData.name || 'N/A'}`);
-              explorationResults.push(`  版本: ${packageData.version || 'N/A'}`);
-              explorationResults.push(`  描述: ${packageData.description || 'N/A'}`);
+              explorationResults.push(`  ├── 名稱: ${packageData.name || 'N/A'}`);
+              explorationResults.push(`  ├── 版本: ${packageData.version || 'N/A'}`);
+              explorationResults.push(`  ├── 描述: ${packageData.description || 'N/A'}`);
+              
               if (packageData.dependencies) {
-                const mainDeps = Object.keys(packageData.dependencies).slice(0, 5);
-                explorationResults.push(`  主要依賴: ${mainDeps.join(', ')}`);
+                const depCount = Object.keys(packageData.dependencies).length;
+                const mainDeps = Object.keys(packageData.dependencies).slice(0, 8);
+                explorationResults.push(`  ├── 生產依賴 (${depCount}): ${mainDeps.join(', ')}${depCount > 8 ? '...' : ''}`);
               }
+              
+              if (packageData.devDependencies) {
+                const devDepCount = Object.keys(packageData.devDependencies).length;
+                const mainDevDeps = Object.keys(packageData.devDependencies).slice(0, 5);
+                explorationResults.push(`  ├── 開發依賴 (${devDepCount}): ${mainDevDeps.join(', ')}${devDepCount > 5 ? '...' : ''}`);
+              }
+              
               if (packageData.scripts) {
-                const scripts = Object.keys(packageData.scripts).slice(0, 5);
-                explorationResults.push(`  可用腳本: ${scripts.join(', ')}`);
+                const scripts = Object.keys(packageData.scripts);
+                explorationResults.push(`  └── 可用腳本: ${scripts.join(', ')}`);
               }
             } catch (parseError) {
-              const lines = result.data.split('\n').slice(0, 5);
-              explorationResults.push(`  ${lines.join('\n  ')}`);
+              const lines = result.data.split('\n').slice(0, 3);
+              explorationResults.push(`  └── 內容預覽:\n    ${lines.join('\n    ')}`);
+            }
+          } else if (file.endsWith('.json')) {
+            // 其他 JSON 檔案
+            try {
+              const jsonData = JSON.parse(result.data);
+              const keys = Object.keys(jsonData).slice(0, 5);
+              explorationResults.push(`  └── 主要配置: ${keys.join(', ')}`);
+            } catch (parseError) {
+              const lines = result.data.split('\n').slice(0, 3);
+              explorationResults.push(`  └── 內容預覽:\n    ${lines.join('\n    ')}`);
             }
           } else {
-            // 只顯示前5行以避免過長
-            const lines = result.data.split('\n').slice(0, 5);
-            explorationResults.push(`  ${lines.join('\n  ')}`);
-            if (result.data.split('\n').length > 5) {
-              explorationResults.push('  ...(省略其餘內容)');
-            }
+            // 其他檔案只顯示前幾行
+            const lines = result.data.split('\n').slice(0, 3);
+            const totalLines = result.data.split('\n').length;
+            explorationResults.push(`  └── 內容預覽 (共 ${totalLines} 行):\n    ${lines.join('\n    ')}`);
           }
+        } else {
+          console.log(`❌ 檔案 ${filePath} 不存在或無法讀取`);
         }
       } catch (error) {
-        // 檔案不存在時跳過
+        console.log(`❌ 讀取檔案 ${file} 時出錯:`, error);
       }
     }
 
-    // 3. 生成架構摘要
-    explorationResults.push('\n\n🏗️ 專案架構摘要:');
-    explorationResults.push(`├── 專案位於: ${projectPath}`);
+    explorationResults.push(`\n📊 檔案統計: 找到 ${foundFiles} 個關鍵配置檔案`);
+
+    // 3. 生成智能架構分析
+    explorationResults.push('\n\n🏗️ 專案架構智能分析:');
+    explorationResults.push(`${'─'.repeat(30)}`);
+    explorationResults.push(`├── 專案位置: ${projectPath}`);
     explorationResults.push(`├── 專案名稱: ${projectInfo.name}`);
     
     // 智能架構識別
+    let architectureType = '未知架構';
+    let frameworkInfo = [];
+    
     try {
-      const srcResult = await toolkit.fileSystem.listDirectory(`${projectPath}/src`);
-      const appResult = await toolkit.fileSystem.listDirectory(`${projectPath}/src/app`);
-      const pagesResult = await toolkit.fileSystem.listDirectory(`${projectPath}/pages`);
+      // 檢查是否為 Next.js 專案
+      const packageJsonPath = getDirectoryPath('package.json');
+      const packageResult = await toolkit.fileSystem.readFile(packageJsonPath);
       
-      if (appResult.success) {
-        explorationResults.push('├── 架構類型: Next.js App Router');
-      } else if (pagesResult.success) {
-        explorationResults.push('├── 架構類型: Next.js Pages Router');
-      } else if (srcResult.success) {
-        explorationResults.push('├── 架構類型: React 應用');
-      } else {
-        explorationResults.push('├── 架構類型: 通用 Node.js 專案');
+      if (packageResult.success && packageResult.data) {
+        const packageData = JSON.parse(packageResult.data);
+        const deps = { ...packageData.dependencies, ...packageData.devDependencies };
+        
+        if (deps.next) {
+          // 檢查是否使用 App Router
+          const appDirResult = await toolkit.fileSystem.listDirectory(getDirectoryPath('src/app'));
+          const appRootResult = await toolkit.fileSystem.listDirectory(getDirectoryPath('app'));
+          
+          if (appDirResult.success || appRootResult.success) {
+            architectureType = 'Next.js App Router';
+            frameworkInfo.push('使用最新的 App Router 架構');
+          } else {
+            const pagesDirResult = await toolkit.fileSystem.listDirectory(getDirectoryPath('pages'));
+            if (pagesDirResult.success) {
+              architectureType = 'Next.js Pages Router';
+              frameworkInfo.push('使用傳統的 Pages Router 架構');
+            } else {
+              architectureType = 'Next.js (架構待確認)';
+            }
+          }
+          
+          frameworkInfo.push(`Next.js 版本: ${deps.next}`);
+        } else if (deps.react) {
+          architectureType = 'React 應用';
+          frameworkInfo.push(`React 版本: ${deps.react}`);
+          
+          if (deps['react-scripts']) {
+            frameworkInfo.push('使用 Create React App');
+          } else if (deps.vite) {
+            frameworkInfo.push('使用 Vite 建構工具');
+          }
+        } else if (deps.vue) {
+          architectureType = 'Vue.js 應用';
+          frameworkInfo.push(`Vue 版本: ${deps.vue}`);
+        } else {
+          architectureType = 'Node.js 專案';
+        }
+        
+        // 檢查其他重要技術
+        if (deps.typescript) frameworkInfo.push(`TypeScript: ${deps.typescript}`);
+        if (deps.tailwindcss) frameworkInfo.push('使用 Tailwind CSS');
+        if (deps.eslint) frameworkInfo.push('配置了 ESLint');
+        if (deps.prettier) frameworkInfo.push('配置了 Prettier');
       }
     } catch (error) {
-      explorationResults.push('├── 架構類型: 無法確定');
+      console.log('❌ 架構分析時出錯:', error);
     }
     
-    explorationResults.push('├── 開發語言: TypeScript/JavaScript');
-    explorationResults.push('└── 狀態: 已完成基礎架構分析');
+    explorationResults.push(`├── 架構類型: ${architectureType}`);
+    if (frameworkInfo.length > 0) {
+      explorationResults.push(`├── 技術棧: ${frameworkInfo.join(', ')}`);
+    }
+    explorationResults.push(`├── 開發語言: ${projectInfo.name.includes('typescript') || foundFiles ? 'TypeScript/JavaScript' : 'JavaScript'}`);
+    explorationResults.push(`└── 探索狀態: ✅ 完成 (${foundDirectories} 目錄, ${foundFiles} 配置檔案)`);
 
-    return explorationResults.join('\n');
+    // 4. 總結和建議
+    explorationResults.push('\n\n💡 探索總結:');
+    explorationResults.push(`${'─'.repeat(30)}`);
+    
+    if (foundDirectories === 0) {
+      explorationResults.push('⚠️ 警告: 未找到任何目錄，可能存在路徑配置問題');
+      explorationResults.push('🔧 建議: 檢查 Docker 容器的工作目錄設定');
+    } else if (foundFiles === 0) {
+      explorationResults.push('⚠️ 警告: 未找到關鍵配置檔案');
+      explorationResults.push('🔧 建議: 確認專案是否正確初始化');
+    } else {
+      explorationResults.push(`✅ 專案結構完整，找到 ${foundDirectories} 個目錄和 ${foundFiles} 個配置檔案`);
+      explorationResults.push('🚀 專案已準備就緒，可以進行開發工作');
+    }
+
+    const result = explorationResults.join('\n');
+    console.log('✅ 專案探索完成');
+    return result;
   }
 
   /**
@@ -981,33 +1244,33 @@ export class LangchainChatEngine {
         - "探索專案"、"分析專案"、"目錄"、"檔案"
 
         ### 🎯 強制執行規則
-        1. **檢測到探索請求** → 立即使用 `comprehensive_project_exploration` 工具
-        2. **需要確認專案路徑** → 先使用 `detect_project_path` 工具
-        3. **絕不使用** `list_directory` 工具來回應專案探索請求
+        1. **檢測到探索請求** → 立即使用 \`comprehensive_project_exploration\` 工具
+        2. **需要確認專案路徑** → 先使用 \`detect_project_path\` 工具
+        3. **絕不使用** \`list_directory\` 工具來回應專案探索請求
         4. **必須提供完整分析**，不能只顯示目錄清單
 
         ### ⚡ 自動工具選擇邏輯
 
         #### 專案探索請求
-        ```
+        \`\`\`
         用戶請求包含 ["專案", "目錄", "檔案", "結構", "探索"] 關鍵詞
         ↓
         立即執行: comprehensive_project_exploration
         ↓
         提供完整的專案架構分析報告
-        ```
+        \`\`\`
 
         #### 智能檔案搜尋請求  
-        ```
+        \`\`\`
         用戶請求包含 ["查看 xxx.tsx", "看看 xxx.js", "主頁", "配置"] 等檔案相關詞彙
         ↓
         立即執行: intelligent_file_search
         ↓
         自動在整個專案中搜尋 → 找到最佳匹配 → 顯示檔案內容和分析
-        ```
+        \`\`\`
 
         ### 🎯 檔案搜尋智能識別
-        當用戶提到以下模式時，自動使用 `intelligent_file_search`：
+        當用戶提到以下模式時，自動使用 \`intelligent_file_search\`：
         - "查看 [檔案名]"、"看看 [檔案名]"、"打開 [檔案名]"
         - "主頁"、"首頁"、"根頁面" → 自動搜尋 page.tsx
         - "配置"、"設定" → 自動搜尋配置檔案
@@ -1559,4 +1822,5 @@ export function createLangchainChatEngine(apiKey: string, options?: {
   maxTokens?: number;
 }): LangchainChatEngine {
   return new LangchainChatEngine(apiKey, options);
+}
 }

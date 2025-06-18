@@ -3,6 +3,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { DockerStatusResponse } from '@/app/api/docker-status/route';
 import { ContainerInfo as ApiContainerInfo } from '@/app/api/docker-containers/route';
+import { 
+  getSmartDockerStatusManager, 
+  DockerContainerStatus, 
+  StatusChangeEvent 
+} from '@/lib/docker/smart-status-manager';
 
 interface ContainerInfo {
   name: string;
@@ -12,22 +17,22 @@ interface ContainerInfo {
 
 interface DockerStatusMonitorProps {
   containers?: ContainerInfo[];
-  refreshInterval?: number; // 毫秒
-  autoRefresh?: boolean;
+  refreshInterval?: number; // 已棄用，使用智能管理器
+  autoRefresh?: boolean; // 已棄用，使用智能管理器
 }
 
 export function DockerStatusMonitor({
   containers: propContainers,
-  refreshInterval = 30000, // 30秒，減少頻率避免洗版
-  autoRefresh = true
+  refreshInterval = 30000, // 保留向後兼容，但不再使用
+  autoRefresh = true // 保留向後兼容，但不再使用
 }: DockerStatusMonitorProps) {
   const [containers, setContainers] = useState<ContainerInfo[]>(propContainers || []);
-  const [statuses, setStatuses] = useState<Map<string, DockerStatusResponse>>(new Map());
+  const [statuses, setStatuses] = useState<Map<string, DockerContainerStatus>>(new Map());
   const [isLoading, setIsLoading] = useState(true);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [startingContainers, setStartingContainers] = useState<Set<string>>(new Set());
   const [isClient, setIsClient] = useState(false);
-  const [isPaused, setIsPaused] = useState(false); // 新增：暫停自動刷新控制
+  const [isMonitoringActive, setIsMonitoringActive] = useState(true);
 
   // 確保這是客戶端渲染
   useEffect(() => {
@@ -59,67 +64,109 @@ export function DockerStatusMonitor({
     }
   }, []);
 
-  const fetchContainerStatus = useCallback(async (container: ContainerInfo) => {
-    try {
-      const response = await fetch(
-        `/api/docker-status?containerId=${container.name}&port=${container.port}`
-      );
-      const data: DockerStatusResponse = await response.json();
-      return { key: container.name, data };
-    } catch (error) {
-      return {
-        key: container.name,
-        data: {
-          success: false,
-          error: error instanceof Error ? error.message : 'Network error',
-          lastChecked: new Date().toISOString()
-        } as DockerStatusResponse
-      };
-    }
-  }, []);
+  // 使用智能狀態管理器
+  useEffect(() => {
+    const manager = getSmartDockerStatusManager();
+    
+    // 訂閱狀態變化事件
+    const unsubscribe = manager.subscribe((event: StatusChangeEvent) => {
+      setStatuses(prev => {
+        const newStatuses = new Map(prev);
+        newStatuses.set(event.containerId, event.newStatus);
+        return newStatuses;
+      });
+      setLastUpdate(new Date());
+    });
 
+    // 初始化容器列表和狀態
+    const initializeMonitoring = async () => {
+      setIsLoading(true);
+      
+      try {
+        // 如果沒有預設容器，先獲取動態容器列表
+        let currentContainers = containers;
+        if (currentContainers.length === 0) {
+          currentContainers = await fetchContainerList();
+        }
+
+        if (currentContainers.length > 0) {
+          // 獲取所有容器的初始狀態
+          const containerIds = currentContainers.map(c => c.name);
+          const initialStatuses = await manager.getMultipleContainerStatus(containerIds);
+          
+          setStatuses(initialStatuses);
+          setLastUpdate(new Date());
+          
+          // 如果監控是活躍的，開始監控所有容器
+          if (isMonitoringActive) {
+            containerIds.forEach(containerId => {
+              manager.startMonitoring(containerId);
+            });
+          }
+        }
+      } catch (error) {
+        console.error('初始化監控失敗:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    initializeMonitoring();
+
+    return () => {
+      unsubscribe();
+      // 清理時停止監控
+      containers.forEach(container => {
+        manager.stopMonitoring(container.name);
+      });
+    };
+  }, [containers, fetchContainerList, isMonitoringActive]);
+
+  // 手動刷新
   const refreshStatuses = useCallback(async () => {
     setIsLoading(true);
+    
     try {
-      // 如果沒有預設容器，先獲取動態容器列表
+      const manager = getSmartDockerStatusManager();
+      
+      // 如果沒有容器，先獲取列表
       let currentContainers = containers;
       if (currentContainers.length === 0) {
         currentContainers = await fetchContainerList();
       }
 
-      if (currentContainers.length === 0) {
-        setStatuses(new Map());
+      if (currentContainers.length > 0) {
+        const containerIds = currentContainers.map(c => c.name);
+        const refreshedStatuses = await manager.getMultipleContainerStatus(containerIds, true);
+        
+        setStatuses(refreshedStatuses);
         setLastUpdate(new Date());
-        return;
       }
-
-      const results = await Promise.all(
-        currentContainers.map(container => fetchContainerStatus(container))
-      );
-
-      const newStatuses = new Map();
-      results.forEach(({ key, data }) => {
-        newStatuses.set(key, data);
-      });
-
-      setStatuses(newStatuses);
-      setLastUpdate(new Date());
     } catch (error) {
-      console.error('Failed to refresh Docker statuses:', error);
+      console.error('刷新狀態失敗:', error);
     } finally {
       setIsLoading(false);
     }
-  }, [containers, fetchContainerStatus, fetchContainerList]);
+  }, [containers, fetchContainerList]);
 
-  // 初始載入和自動刷新
-  useEffect(() => {
-    refreshStatuses();
-
-    if (autoRefresh && !isPaused) {
-      const interval = setInterval(refreshStatuses, refreshInterval);
-      return () => clearInterval(interval);
+  // 切換監控狀態
+  const toggleMonitoring = useCallback(() => {
+    const manager = getSmartDockerStatusManager();
+    
+    if (isMonitoringActive) {
+      // 停止監控
+      containers.forEach(container => {
+        manager.stopMonitoring(container.name);
+      });
+      setIsMonitoringActive(false);
+    } else {
+      // 開始監控
+      containers.forEach(container => {
+        manager.startMonitoring(container.name);
+      });
+      setIsMonitoringActive(true);
     }
-  }, [refreshStatuses, autoRefresh, refreshInterval, isPaused]);
+  }, [containers, isMonitoringActive]);
 
   // 自動啟動開發服務器
   const handleAutoStartDevServer = useCallback(async (containerName: string) => {
@@ -138,10 +185,9 @@ export function DockerStatusMonitor({
       const result = await response.json();
       
       if (result.success) {
-        // 等待幾秒後刷新狀態
-        setTimeout(() => {
-          refreshStatuses();
-        }, 5000);
+        // 觸發狀態更新
+        const manager = getSmartDockerStatusManager();
+        await manager.getContainerStatus(containerName, true);
         
         alert(`✅ 開發服務器啟動成功！\n項目路徑: ${result.projectPath}\nPID: ${result.pid}`);
       } else {
@@ -156,51 +202,45 @@ export function DockerStatusMonitor({
         return newSet;
       });
     }
-  }, [refreshStatuses]);
+  }, []);
 
-  const getStatusIcon = (status: DockerStatusResponse) => {
-    if (!status.success) {
-      return '❌';
-    }
-
-    switch (status.containerStatus) {
+  const getStatusIcon = (status: DockerContainerStatus) => {
+    switch (status.status) {
       case 'running':
         return status.serviceStatus === 'accessible' ? '🟢' : '🟡';
       case 'stopped':
         return '🔴';
+      case 'error':
+        return '❌';
       default:
         return '⚪';
     }
   };
 
-  const getStatusText = (status: DockerStatusResponse) => {
-    if (!status.success) {
-      return `錯誤: ${status.error}`;
-    }
-
-    switch (status.containerStatus) {
+  const getStatusText = (status: DockerContainerStatus) => {
+    switch (status.status) {
       case 'running':
         return status.serviceStatus === 'accessible' 
           ? '運行中 & 可訪問' 
           : '運行中但不可訪問';
       case 'stopped':
         return '已停止';
+      case 'error':
+        return `錯誤: ${status.error}`;
       default:
         return '狀態未知';
     }
   };
 
-  const getStatusColor = (status: DockerStatusResponse) => {
-    if (!status.success) {
-      return 'text-red-600';
-    }
-
-    switch (status.containerStatus) {
+  const getStatusColor = (status: DockerContainerStatus) => {
+    switch (status.status) {
       case 'running':
         return status.serviceStatus === 'accessible' 
           ? 'text-green-600' 
           : 'text-yellow-600';
       case 'stopped':
+        return 'text-red-600';
+      case 'error':
         return 'text-red-600';
       default:
         return 'text-gray-500';
@@ -213,13 +253,13 @@ export function DockerStatusMonitor({
       <div className="bg-white rounded-lg shadow-sm border p-4">
         <div className="flex justify-between items-center mb-4">
           <h3 className="text-lg font-semibold text-gray-900">
-            Docker 容器狀態監控
+            智能 Docker 容器狀態監控
           </h3>
           <div className="text-sm text-gray-500">載入中...</div>
         </div>
         <div className="text-center py-8">
           <div className="text-2xl mb-2">🔄</div>
-          <p className="text-gray-600">正在初始化監控系統...</p>
+          <p className="text-gray-600">正在初始化智能監控系統...</p>
         </div>
       </div>
     );
@@ -229,7 +269,7 @@ export function DockerStatusMonitor({
     <div className="bg-white rounded-lg shadow-sm border p-4">
       <div className="flex justify-between items-center mb-4">
         <h3 className="text-lg font-semibold text-gray-900">
-          Docker 容器狀態監控
+          🧠 智能 Docker 容器狀態監控
         </h3>
         <div className="flex items-center gap-2">
           {lastUpdate && (
@@ -237,18 +277,16 @@ export function DockerStatusMonitor({
               上次更新: {lastUpdate.toLocaleTimeString()}
             </span>
           )}
-          {autoRefresh && (
-            <button
-              onClick={() => setIsPaused(!isPaused)}
-              className={`px-3 py-1 text-sm rounded transition-colors ${
-                isPaused 
-                  ? 'bg-yellow-500 hover:bg-yellow-600 text-white' 
-                  : 'bg-green-500 hover:bg-green-600 text-white'
-              }`}
-            >
-              {isPaused ? '▶️ 恢復' : '⏸️ 暫停'}
-            </button>
-          )}
+          <button
+            onClick={toggleMonitoring}
+            className={`px-3 py-1 text-sm rounded transition-colors ${
+              isMonitoringActive 
+                ? 'bg-green-500 hover:bg-green-600 text-white' 
+                : 'bg-gray-500 hover:bg-gray-600 text-white'
+            }`}
+          >
+            {isMonitoringActive ? '🟢 智能監控中' : '⚪ 監控已暫停'}
+          </button>
           <button
             onClick={refreshStatuses}
             disabled={isLoading}
@@ -256,6 +294,22 @@ export function DockerStatusMonitor({
           >
             {isLoading ? '更新中...' : '🔄 刷新'}
           </button>
+        </div>
+      </div>
+
+      {/* 智能監控說明 */}
+      <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+        <div className="flex items-start gap-2">
+          <span className="text-blue-600">💡</span>
+          <div className="text-sm text-blue-800">
+            <strong>智能監控特點：</strong>
+            <ul className="mt-1 space-y-1 text-xs">
+              <li>• 15秒智能快取，避免重複請求</li>
+              <li>• 只在狀態真正變化時更新</li>
+              <li>• 事件驅動更新，減少不必要的檢查</li>
+              <li>• 自動批量處理，最大化效率</li>
+            </ul>
+          </div>
         </div>
       </div>
 
@@ -277,6 +331,11 @@ export function DockerStatusMonitor({
                     <p className="text-sm text-gray-500">
                       容器: {container.name}
                     </p>
+                    {status && (
+                      <p className="text-xs text-gray-400">
+                        上次檢查: {status.lastChecked.toLocaleTimeString()}
+                      </p>
+                    )}
                   </div>
                 </div>
                 
@@ -295,7 +354,7 @@ export function DockerStatusMonitor({
                     </a>
                   )}
                   {/* 自動啟動按鈕 */}
-                  {status && status.containerStatus === 'running' && status.serviceStatus !== 'accessible' && (
+                  {status && status.status === 'running' && status.serviceStatus !== 'accessible' && (
                     <div className="mt-2">
                       <button
                         onClick={() => handleAutoStartDevServer(container.name)}
@@ -339,31 +398,29 @@ export function DockerStatusMonitor({
         })}
       </div>
 
-              {/* 自動刷新指示器 */}
-        {autoRefresh && (
-          <div className="mt-4 text-center">
-            <p className="text-xs text-gray-500">
-              {isPaused ? (
-                <>⏸️ 自動刷新已暫停 - 每 {refreshInterval / 1000} 秒</>
-              ) : (
-                <>🔄 每 {refreshInterval / 1000} 秒自動刷新</>
-              )}
-            </p>
-          </div>
-        )}
+      {/* 智能監控狀態指示器 */}
+      <div className="mt-4 text-center">
+        <p className="text-xs text-gray-500">
+          {isMonitoringActive ? (
+            <>🧠 智能監控啟用 - 自動檢測狀態變化</>
+          ) : (
+            <>⏸️ 智能監控已暫停 - 點擊上方按鈕恢復</>
+          )}
+        </p>
+      </div>
 
-        {/* 無容器提示 */}
-        {containers.length === 0 && !isLoading && (
-          <div className="mt-4 text-center py-8">
-            <div className="text-4xl mb-4">🐳</div>
-            <h4 className="text-lg font-medium text-gray-900 mb-2">
-              未發現相關容器
-            </h4>
-            <p className="text-sm text-gray-600">
-              請確保 Docker 容器正在運行並包含 "ai-web-ide" 關鍵字
-            </p>
-          </div>
-        )}
+      {/* 無容器提示 */}
+      {containers.length === 0 && !isLoading && (
+        <div className="mt-4 text-center py-8">
+          <div className="text-4xl mb-4">🐳</div>
+          <h4 className="text-lg font-medium text-gray-900 mb-2">
+            未發現相關容器
+          </h4>
+          <p className="text-sm text-gray-600">
+            請確保 Docker 容器正在運行並包含 "ai-web-ide" 關鍵字
+          </p>
+        </div>
+      )}
     </div>
   );
 }

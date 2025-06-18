@@ -15,21 +15,12 @@ export interface SecurityValidationResult {
 export class DockerSecurityValidator {
   private static instance: DockerSecurityValidator;
   private allowedContainerIds: Set<string> = new Set();
-  private allowedWorkingDirectories: Set<string> = new Set();
+  private projectWorkspacePattern: RegExp;
+  private strictMode: boolean = true;
 
   private constructor() {
-    // 預設允許的容器ID（從已知的容器配置中獲取）
-    this.allowedContainerIds.add('41acd88ac05a');
-    this.allowedContainerIds.add('4bf66b074def');
-    this.allowedContainerIds.add('26a41a4ea7ec');
-    this.allowedContainerIds.add('7df86921d2ab');
-    this.allowedContainerIds.add('22f4b689ef71');
-
-    // 預設允許的工作目錄
-    this.allowedWorkingDirectories.add('/app/workspace/web_test');
-    this.allowedWorkingDirectories.add('/app/workspace/docker_test');
-    this.allowedWorkingDirectories.add('/app/workspace');
-    this.allowedWorkingDirectories.add('/app');
+    // 嚴格的專案工作區模式：只允許 /app/workspace/[project-name]/ 路徑
+    this.projectWorkspacePattern = /^\/app\/workspace\/[a-zA-Z0-9_-]+(?:\/.*)?$/;
   }
 
   static getInstance(): DockerSecurityValidator {
@@ -40,39 +31,44 @@ export class DockerSecurityValidator {
   }
 
   /**
-   * 驗證Docker上下文是否安全
+   * 驗證Docker上下文是否安全（針對專案工作區）
    */
-  validateDockerContext(dockerContext: DockerContext): SecurityValidationResult {
-    // 檢查容器ID是否在允許列表中
-    if (!this.allowedContainerIds.has(dockerContext.containerId)) {
-      return {
-        isValid: false,
-        reason: `未授權的容器ID: ${dockerContext.containerId}`,
-      };
-    }
-
-    // 檢查工作目錄是否安全
-    if (!this.isWorkingDirectorySafe(dockerContext.workingDirectory)) {
-      return {
-        isValid: false,
-        reason: `不安全的工作目錄: ${dockerContext.workingDirectory}`,
-        suggestedPath: '/app/workspace/web_test',
-      };
+  validateDockerContext(dockerContext: DockerContext, projectName?: string): SecurityValidationResult {
+    // 在嚴格模式下，驗證工作目錄必須符合專案工作區模式
+    if (this.strictMode) {
+      const expectedPath = projectName ? `/app/workspace/${projectName}` : '/app/workspace';
+      
+      if (!this.isProjectWorkspacePath(dockerContext.workingDirectory, projectName)) {
+        return {
+          isValid: false,
+          reason: `工作目錄必須在專案工作區內: ${dockerContext.workingDirectory}`,
+          suggestedPath: expectedPath,
+        };
+      }
     }
 
     return { isValid: true };
   }
 
   /**
-   * 驗證檔案路徑是否安全
+   * 驗證檔案路徑是否安全（嚴格限制在專案工作區內）
    */
-  validateFilePath(filePath: string, dockerContext: DockerContext): SecurityValidationResult {
-    // 檢查是否為絕對路徑且指向容器外
-    if (filePath.startsWith('/') && !filePath.startsWith('/app')) {
+  validateFilePath(filePath: string, dockerContext: DockerContext, projectName?: string): SecurityValidationResult {
+    // 正規化路徑
+    const normalizedPath = this.normalizePath(filePath, dockerContext.workingDirectory);
+    
+    // 在嚴格模式下，必須在專案工作區內
+    const isInWorkspace = this.isProjectWorkspacePath(normalizedPath, projectName);
+    
+    if (this.strictMode && !isInWorkspace) {
+      const suggestedPath = projectName 
+        ? this.relocateToProjectWorkspace(filePath, projectName)
+        : this.sanitizeFilePath(filePath);
+        
       return {
         isValid: false,
-        reason: `檔案路徑指向容器外: ${filePath}`,
-        suggestedPath: this.sanitizeFilePath(filePath),
+        reason: `檔案路徑必須在專案工作區內: ${normalizedPath}`,
+        suggestedPath,
       };
     }
 
@@ -85,22 +81,23 @@ export class DockerSecurityValidator {
       };
     }
 
-    // 檢查是否嘗試訪問敏感檔案
-    const sensitiveFiles = [
-      '/etc/passwd',
-      '/etc/shadow',
+    // 檢查是否嘗試訪問敏感檔案（即使在工作區內也不允許）
+    const sensitivePatterns = [
+      '/etc/',
       '/root/',
       '/home/',
       '/var/log/',
       '/proc/',
       '/sys/',
+      '/.env',
+      '/node_modules/',
     ];
 
-    for (const sensitive of sensitiveFiles) {
-      if (filePath.startsWith(sensitive)) {
+    for (const pattern of sensitivePatterns) {
+      if (normalizedPath.includes(pattern)) {
         return {
           isValid: false,
-          reason: `嘗試訪問敏感檔案: ${filePath}`,
+          reason: `嘗試訪問受限檔案: ${normalizedPath}`,
         };
       }
     }
@@ -109,28 +106,67 @@ export class DockerSecurityValidator {
   }
 
   /**
-   * 驗證目錄路徑是否安全
+   * 驗證目錄路徑是否安全（嚴格限制在專案工作區內）
    */
-  validateDirectoryPath(dirPath: string, dockerContext: DockerContext): SecurityValidationResult {
+  validateDirectoryPath(dirPath: string, dockerContext: DockerContext, projectName?: string): SecurityValidationResult {
     // 對於目錄路徑使用相同的檔案路徑驗證邏輯
-    return this.validateFilePath(dirPath, dockerContext);
+    return this.validateFilePath(dirPath, dockerContext, projectName);
   }
 
   /**
-   * 檢查工作目錄是否安全
+   * 檢查是否為有效的專案工作區路徑
    */
-  private isWorkingDirectorySafe(workingDirectory: string): boolean {
-    // 必須在 /app 目錄內
-    if (!workingDirectory.startsWith('/app')) {
-      return false;
+  private isProjectWorkspacePath(path: string, projectName?: string): boolean {
+    const normalizedPath = path.replace(/\/+/g, '/').replace(/\/$/, '');
+    
+    if (projectName) {
+      // 如果指定了專案名稱，必須在 /app/workspace/[projectName]/ 內
+      const projectPath = `/app/workspace/${projectName}`;
+      return normalizedPath === projectPath || normalizedPath.startsWith(`${projectPath}/`);
+    } else {
+      // 如果沒有指定專案名稱，檢查是否在 /app/workspace/ 下的任何專案
+      return normalizedPath.startsWith('/app/workspace/') && this.projectWorkspacePattern.test(normalizedPath);
     }
+  }
 
-    // 不能包含路徑遍歷
-    if (workingDirectory.includes('..')) {
-      return false;
+  /**
+   * 正規化路徑（相對路徑轉換為絕對路徑）
+   */
+  private normalizePath(filePath: string, workingDirectory: string): string {
+    let normalizedPath: string;
+    
+    if (filePath.startsWith('/')) {
+      // 絕對路徑，直接處理
+      normalizedPath = filePath;
+    } else {
+      // 相對路徑處理
+      if (filePath === '.' || filePath === './') {
+        return workingDirectory.replace(/\/$/, '');
+      }
+      
+      // 移除開頭的 ./
+      const cleanPath = filePath.replace(/^\.\//, '');
+      
+      // 相對路徑，基於工作目錄解析
+      const base = workingDirectory.replace(/\/$/, '');
+      normalizedPath = `${base}/${cleanPath}`;
     }
+    
+    // 清理路徑：合併多個斜線，移除結尾的 /. 模式
+    normalizedPath = normalizedPath
+      .replace(/\/+/g, '/') // 合併多個斜線
+      .replace(/\/\.$/, '') // 移除結尾的 /.
+      .replace(/\/$/, ''); // 移除結尾的斜線
+    
+    return normalizedPath || '/';
+  }
 
-    return true;
+  /**
+   * 將檔案路徑重新定位到專案工作區
+   */
+  private relocateToProjectWorkspace(filePath: string, projectName: string): string {
+    const fileName = filePath.split('/').pop() || 'file';
+    return `/app/workspace/${projectName}/${fileName}`;
   }
 
   /**
@@ -152,86 +188,108 @@ export class DockerSecurityValidator {
   }
 
   /**
-   * 添加允許的容器ID
+   * 設定專案名稱（動態更新專案工作區）
    */
-  addAllowedContainer(containerId: string): void {
-    this.allowedContainerIds.add(containerId);
-    logger.info(`[SecurityValidator] 已添加允許的容器: ${containerId}`);
+  setProjectName(projectName: string): void {
+    if (!/^[a-zA-Z0-9_-]+$/.test(projectName)) {
+      throw new Error(`不合法的專案名稱: ${projectName}`);
+    }
+    logger.info(`[SecurityValidator] 設定專案工作區: /app/workspace/${projectName}`);
   }
 
   /**
-   * 移除允許的容器ID
+   * 啟用/禁用嚴格模式
    */
-  removeAllowedContainer(containerId: string): void {
-    this.allowedContainerIds.delete(containerId);
-    logger.info(`[SecurityValidator] 已移除允許的容器: ${containerId}`);
+  setStrictMode(enabled: boolean): void {
+    this.strictMode = enabled;
+    logger.info(`[SecurityValidator] 嚴格模式: ${enabled ? '啟用' : '禁用'}`);
   }
 
   /**
    * 獲取安全報告
    */
-  getSecurityReport(): {
-    allowedContainers: string[];
-    allowedWorkingDirectories: string[];
-    securityLevel: 'HIGH' | 'MEDIUM' | 'LOW';
+  getSecurityReport(projectName?: string): {
+    strictMode: boolean;
+    projectWorkspacePattern: string;
+    currentProjectPath?: string;
+    securityLevel: 'HIGHEST' | 'HIGH' | 'MEDIUM';
   } {
     return {
-      allowedContainers: Array.from(this.allowedContainerIds),
-      allowedWorkingDirectories: Array.from(this.allowedWorkingDirectories),
-      securityLevel: this.allowedContainerIds.size <= 5 ? 'HIGH' : 'MEDIUM',
+      strictMode: this.strictMode,
+      projectWorkspacePattern: this.projectWorkspacePattern.source,
+      currentProjectPath: projectName ? `/app/workspace/${projectName}` : undefined,
+      securityLevel: this.strictMode ? 'HIGHEST' : 'HIGH',
     };
   }
 
   /**
-   * 驗證工具調用是否安全
+   * 驗證工具調用是否安全（針對專案工作區）
    */
   validateToolCall(
     toolName: string,
     parameters: any,
-    dockerContext: DockerContext
+    dockerContext: DockerContext,
+    projectName?: string
   ): SecurityValidationResult {
     // 首先驗證Docker上下文
-    const contextValidation = this.validateDockerContext(dockerContext);
+    const contextValidation = this.validateDockerContext(dockerContext, projectName);
     if (!contextValidation.isValid) {
       return contextValidation;
     }
 
     // 根據工具類型進行特定驗證
     switch (toolName) {
-      case 'docker_read_file':
-      case 'docker_write_file':
-        if (parameters.filePath) {
-          return this.validateFilePath(parameters.filePath, dockerContext);
+      case 'readFile':
+      case 'writeFile':
+      case 'createFile':
+      case 'deleteFile':
+        if (parameters.filePath || parameters.path) {
+          const filePath = parameters.filePath || parameters.path;
+          return this.validateFilePath(filePath, dockerContext, projectName);
         }
         break;
-
-      case 'docker_list_directory':
-      case 'docker_list_files':
+        
+      case 'listDirectory':
+      case 'createDirectory':
+      case 'removeDirectory':
         if (parameters.dirPath || parameters.path) {
-          const pathToCheck = parameters.dirPath || parameters.path || '.';
-          return this.validateDirectoryPath(pathToCheck, dockerContext);
+          const dirPath = parameters.dirPath || parameters.path;
+          return this.validateDirectoryPath(dirPath, dockerContext, projectName);
         }
         break;
-
-      case 'docker_find_files':
-        if (parameters.searchPath) {
-          return this.validateDirectoryPath(parameters.searchPath, dockerContext);
-        }
-        break;
-
-      default:
-        // 對於其他Docker工具，只要Docker上下文有效就允許
-        if (toolName.startsWith('docker_')) {
-          return { isValid: true };
-        } else {
+        
+      case 'executeCommand':
+        // 限制危險的命令執行
+        const command = parameters.command || '';
+        if (this.isDangerousCommand(command)) {
           return {
             isValid: false,
-            reason: `非Docker工具不被允許: ${toolName}`,
+            reason: `危險的命令被阻止: ${command}`,
           };
         }
+        break;
     }
 
     return { isValid: true };
+  }
+
+  /**
+   * 檢查是否為危險命令
+   */
+  private isDangerousCommand(command: string): boolean {
+    const dangerousPatterns = [
+      /rm\s+-rf\s+\//, // 刪除根目錄
+      /chmod\s+777/, // 危險的權限設定
+      /sudo/, // 提權命令
+      /curl.*\|.*sh/, // 管道執行下載腳本
+      /wget.*\|.*sh/, // 管道執行下載腳本
+      />\s*\/etc\//, // 寫入系統配置
+      /cat\s+\/etc\/passwd/, // 讀取敏感檔案
+      /netcat|nc.*-l/, // 網路監聽
+      /python.*-c.*exec/, // 動態執行Python代碼
+    ];
+
+    return dangerousPatterns.some(pattern => pattern.test(command));
   }
 
   /**

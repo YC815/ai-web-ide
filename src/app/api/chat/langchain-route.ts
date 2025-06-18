@@ -5,9 +5,11 @@ import { ProjectContext } from '../../../lib/ai/context-manager';
 // 定義嚴格的類型
 export interface ToolCallResult {
   tool: string;
-  input: string | Record<string, unknown>;
-  output: string | Record<string, unknown>;
+  input: string | Record<string, unknown> | unknown[];
+  output: string | Record<string, unknown> | unknown[];
   success: boolean;
+  duration?: number;
+  timestamp?: string;
 }
 
 export interface ThoughtProcess {
@@ -36,6 +38,7 @@ export interface LangchainChatRequest {
   apiToken: string;
   model?: string;
   temperature?: number;
+  containerId?: string; // 添加容器 ID 字段
 }
 
 export interface LangchainChatApiResponse {
@@ -110,17 +113,36 @@ function cleanupExpiredSessions(): void {
   }
 }
 
+// 專案名稱標準化函數 - 將前端的專案名稱映射到容器內的實際目錄名稱
+function normalizeProjectName(projectName: string, containerId?: string): string {
+  // 如果有容器 ID，嘗試從容器名稱提取正確的專案名稱
+  if (containerId && containerId.includes('ai-web-ide-')) {
+    const match = containerId.match(/^ai-web-ide-(.+?)-\d+$/);
+    if (match) {
+      // 將短橫線轉換為底線，這是容器內實際的目錄格式
+      return match[1].replace(/-/g, '_');
+    }
+  }
+  
+  // 如果無法從容器 ID 提取，直接標準化專案名稱
+  return projectName
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, '_') // 替換特殊字符為底線
+    .replace(/-/g, '_'); // 統一使用底線
+}
+
 export async function POST(request: NextRequest): Promise<NextResponse<LangchainChatApiResponse>> {
   try {
     const body: LangchainChatRequest = await request.json();
-    const { 
-      message, 
-      projectId, 
-      projectName = 'Unknown Project', 
+    const {
+      message,
+      projectId,
+      projectName = 'Unknown Project',
       sessionId,
       apiToken,
       model = 'gpt-4o',
-      temperature = 0.1
+      temperature = 0.1,
+      containerId // 從請求中獲取容器 ID
     } = body;
 
     // 驗證必要參數
@@ -153,7 +175,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<Langchain
     // 獲取或創建 Langchain 聊天引擎 - 按專案分組
     const engineKey = `${projectId}_${apiToken.substring(0, 10)}`;
     let chatEngine = chatEngines.get(engineKey);
-    
+
     if (!chatEngine) {
       console.log(`🚀 創建新的 Langchain 聊天引擎: ${engineKey}`);
       chatEngine = createLangchainChatEngine(apiToken, {
@@ -164,11 +186,16 @@ export async function POST(request: NextRequest): Promise<NextResponse<Langchain
       chatEngines.set(engineKey, chatEngine);
     }
 
-    // 建構專案上下文
+    // 標準化專案名稱以匹配容器內的實際目錄結構
+    const normalizedProjectName = normalizeProjectName(projectName, containerId);
+    console.log(`🔄 專案名稱標準化: ${projectName} -> ${normalizedProjectName}`);
+    
+    // 建構專案上下文 - 使用標準化的專案名稱
     const projectContext: ProjectContext = {
       projectId,
-      projectName,
-      containerStatus: 'running'
+      projectName: normalizedProjectName, // 使用標準化的專案名稱
+      containerStatus: 'running',
+      containerId: containerId // 添加容器 ID 到上下文
     };
 
     // 保存會話狀態
@@ -185,22 +212,26 @@ export async function POST(request: NextRequest): Promise<NextResponse<Langchain
     );
 
     // 獲取會話統計
-    const sessionStats = chatEngine.getSessionStats();
+    const sessionStats = chatEngine.getSessionStats ? chatEngine.getSessionStats() : {
+      activeSessions: chatEngines.size,
+      totalMemoryUsage: 0,
+      oldestSession: currentSessionId
+    };
 
     console.log(`✅ 處理完成，會話統計:`, sessionStats);
 
     // 定期清理過期會話
     if (Date.now() - lastCleanup > CLEANUP_INTERVAL) {
       console.log('🧹 開始清理過期的 Langchain 會話...');
-      
+
       // 清理引擎中的過期會話
       for (const engine of chatEngines.values()) {
         engine.cleanupExpiredSessions();
       }
-      
+
       // 清理持久化存儲中的過期會話
       cleanupExpiredSessions();
-      
+
       lastCleanup = Date.now();
     }
 
@@ -229,7 +260,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<Langchain
 
   } catch (error) {
     console.error('Langchain 聊天 API 錯誤:', error);
-    
+
     return NextResponse.json({
       success: false,
       error: error instanceof Error ? error.message : '未知錯誤'
@@ -325,14 +356,14 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
       if (engineKey) {
         chatEngines.delete(engineKey);
       }
-      
+
       // 清理該專案的所有會話
       for (const [sessionId, session] of sessionStore.entries()) {
         if (session.projectId === projectId) {
           sessionStore.delete(sessionId);
         }
       }
-      
+
       return NextResponse.json({
         success: true,
         data: { message: `專案 ${projectId} 的所有聊天引擎和會話已清理` }

@@ -121,15 +121,27 @@ export async function getDockerContextById(containerId: string): Promise<DockerC
     if (fullId && name) {
       console.log(`✅ 動態檢測到容器: ${fullId.substring(0, 12)} (${name})`);
       
+      // 從容器名稱推斷專案名稱和工作目錄
+      const containerName = name.startsWith('/') ? name.substring(1) : name;
+      const projectName = extractProjectNameFromContainer(containerName);
+      const workingDirectory = projectName ? `/app/workspace/${projectName}` : '/app/workspace';
+      
+      console.log(`🔧 動態檢測容器配置:`, {
+        containerId: fullId.substring(0, 12),
+        containerName,
+        projectName,
+        workingDirectory
+      });
+      
       const dynamicContext = {
         containerId: fullId.substring(0, 12),
-        containerName: name.startsWith('/') ? name.substring(1) : name,
-        workingDirectory: '/app', // 預設工作目錄
+        containerName: containerName,
+        workingDirectory: workingDirectory,
         status: status === 'running' ? 'running' as const : 'stopped' as const
       };
 
       // 將動態檢測的容器加入配置（記憶體中）
-      await addDynamicContainer(dynamicContext);
+      await addDynamicContainer(dynamicContext, projectName);
       
       return dynamicContext;
     }
@@ -138,6 +150,52 @@ export async function getDockerContextById(containerId: string): Promise<DockerC
   }
   
   return null;
+}
+
+/**
+ * 從容器名稱提取專案名稱（增強版）
+ */
+function extractProjectNameFromContainer(containerName: string): string | null {
+  console.log(`🔍 正在從容器名稱提取專案名稱: ${containerName}`);
+  
+  // 匹配 ai-web-ide-{project-name}-{timestamp} 格式
+  const match = containerName.match(/^ai-web-ide-(.+?)-\d+$/);
+  if (match) {
+    const rawProjectName = match[1];
+    const normalizedName = rawProjectName.replace(/-/g, '_'); // 將短橫線轉換為底線
+    console.log(`✅ 成功提取專案名稱: ${rawProjectName} -> ${normalizedName}`);
+    return normalizedName;
+  }
+  
+  // 如果無法匹配，嘗試其他常見格式
+  if (containerName.includes('web-ide')) {
+    const parts = containerName.split('-');
+    // 找到 web-ide 後面的部分作為專案名稱
+    const webIdeIndex = parts.findIndex(part => part === 'ide');
+    if (webIdeIndex !== -1 && webIdeIndex + 1 < parts.length) {
+      // 取 ide 後面到數字前的所有部分
+      const projectParts = [];
+      for (let i = webIdeIndex + 1; i < parts.length; i++) {
+        if (/^\d+$/.test(parts[i])) break; // 遇到純數字就停止
+        projectParts.push(parts[i]);
+      }
+      if (projectParts.length > 0) {
+        const normalizedName = projectParts.join('_');
+        console.log(`✅ 從複雜格式提取專案名稱: ${projectParts.join('-')} -> ${normalizedName}`);
+        return normalizedName;
+      }
+    }
+  }
+  
+  console.log(`❌ 無法從容器名稱提取專案名稱: ${containerName}`);
+  return null;
+}
+
+/**
+ * 標準化專案名稱：將短橫線轉換為底線
+ */
+export function normalizeProjectName(projectName: string): string {
+  return projectName.replace(/-/g, '_');
 }
 
 /**
@@ -163,7 +221,7 @@ export function getDockerContextByName(containerName: string): DockerContext | n
 /**
  * 動態加入容器配置
  */
-async function addDynamicContainer(context: DockerContext): Promise<void> {
+async function addDynamicContainer(context: DockerContext, projectName?: string): Promise<void> {
   const dynamicKey = `dynamic_${context.containerId}`;
   
   // @ts-ignore - 動態添加配置
@@ -172,7 +230,7 @@ async function addDynamicContainer(context: DockerContext): Promise<void> {
     containerName: context.containerName,
     workingDirectory: context.workingDirectory,
     status: context.status,
-    projectName: context.containerName.replace(/^ai-web-ide-|-\d+$/g, ''),
+    projectName: projectName || context.containerName.replace(/^ai-web-ide-|-\d+$/g, ''),
     hasPackageJson: true // 預設為 true
   };
   

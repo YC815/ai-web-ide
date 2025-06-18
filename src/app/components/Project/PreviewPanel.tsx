@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 // 設備預設配置
 const DEVICE_PRESETS = {
@@ -34,17 +34,19 @@ export function PreviewPanel({ containerId, projectStatus }: PreviewPanelProps) 
   const [devServerStatus, setDevServerStatus] = useState<'running' | 'stopped' | 'starting' | 'error'>('stopped');
   const [showIframe, setShowIframe] = useState(false);
 
-  // 檢查開發服務器狀態並獲取正確的 URL
-  const checkDevServerStatus = async () => {
+  // 檢查開發服務器狀態並獲取正確的 URL（智能化版本）
+  const checkDevServerStatus = useCallback(async () => {
     try {
-      // 首先檢查容器狀態和端口映射
-      const statusResponse = await fetch(`/api/docker-status?containerId=${containerId}&port=3000`);
-      const statusData = await statusResponse.json();
+      const { getSmartDockerStatusManager } = await import('@/lib/docker/smart-status-manager');
+      const manager = getSmartDockerStatusManager();
       
-      if (statusData.success && statusData.containerStatus === 'running') {
-        if (statusData.serviceUrl && statusData.serviceStatus === 'accessible') {
+      // 使用智能狀態管理器獲取狀態
+      const status = await manager.getContainerStatus(containerId);
+      
+      if (status && status.status === 'running') {
+        if (status.serviceUrl && status.serviceStatus === 'accessible') {
           // 使用實際的服務 URL
-          setPreviewUrl(statusData.serviceUrl);
+          setPreviewUrl(status.serviceUrl);
           setDevServerStatus('running');
           setShowIframe(true);
           setErrors([]);
@@ -52,38 +54,38 @@ export function PreviewPanel({ containerId, projectStatus }: PreviewPanelProps) 
         }
       }
 
-      // 如果 docker-status 沒有返回可用的服務，檢查開發服務器
+      // 如果智能管理器沒有返回可用的服務，檢查開發服務器
       const devResponse = await fetch(`/api/docker-dev-server?containerId=${containerId}`);
       const devData = await devResponse.json();
       
-             if (devData.success) {
-         setDevServerStatus(devData.status);
-         if (devData.status === 'running' && devData.port) {
-           // 獲取端口映射來構建正確的 URL
-           if (statusData.success && statusData.portMappings) {
-             const mapping = statusData.portMappings.find(m => m.containerPort === devData.port);
-             if (mapping) {
-               setPreviewUrl(`http://localhost:${mapping.hostPort}`);
-             } else {
-               setPreviewUrl(`http://localhost:${devData.port}`);
-             }
-           } else {
-             setPreviewUrl(`http://localhost:${devData.port}`);
-           }
-           setShowIframe(true);
-           setErrors([]);
-         } else {
-           setShowIframe(false);
-         }
-       } else {
-         setDevServerStatus('stopped');
-         setShowIframe(false);
-       }
+      if (devData.success) {
+        setDevServerStatus(devData.status);
+        if (devData.status === 'running' && devData.port) {
+          // 使用狀態管理器中的端口映射信息
+          if (status?.portMappings) {
+            const mapping = status.portMappings.find(m => m.containerPort === devData.port);
+            if (mapping) {
+              setPreviewUrl(`http://localhost:${mapping.hostPort}`);
+            } else {
+              setPreviewUrl(`http://localhost:${devData.port}`);
+            }
+          } else {
+            setPreviewUrl(`http://localhost:${devData.port}`);
+          }
+          setShowIframe(true);
+          setErrors([]);
+        } else {
+          setShowIframe(false);
+        }
+      } else {
+        setDevServerStatus('stopped');
+        setShowIframe(false);
+      }
     } catch (error) {
       console.error('檢查開發服務器狀態失敗:', error);
       setDevServerStatus('error');
     }
-  };
+  }, [containerId]);
 
   // 自動啟動開發服務器
   const startDevServer = async () => {
@@ -102,34 +104,37 @@ export function PreviewPanel({ containerId, projectStatus }: PreviewPanelProps) 
       
       const data = await response.json();
       
-             if (data.success) {
-         setDevServerStatus('running');
-         
-         // 重新檢查端口映射來獲取正確的 URL
-         try {
-           const statusResponse = await fetch(`/api/docker-status?containerId=${containerId}&port=${data.port || 3000}`);
-           const statusData = await statusResponse.json();
-           
-           if (statusData.success && statusData.portMappings) {
-             const mapping = statusData.portMappings.find(m => m.containerPort === (data.port || 3000));
-             if (mapping) {
-               setPreviewUrl(`http://localhost:${mapping.hostPort}`);
-             } else {
-               setPreviewUrl(`http://localhost:${data.port || 3000}`);
-             }
-           } else {
-             setPreviewUrl(`http://localhost:${data.port || 3000}`);
-           }
-         } catch (error) {
-           setPreviewUrl(`http://localhost:${data.port || 3000}`);
-         }
-         
-         setShowIframe(true);
-         setErrors([]);
-       } else {
-         setDevServerStatus('error');
-         setErrors([data.error || '啟動開發服務器失敗']);
-       }
+      if (data.success) {
+        setDevServerStatus('running');
+        
+        // 使用智能狀態管理器重新檢查狀態
+        try {
+          const { getSmartDockerStatusManager } = await import('@/lib/docker/smart-status-manager');
+          const manager = getSmartDockerStatusManager();
+          
+          // 強制刷新狀態
+          const status = await manager.getContainerStatus(containerId, true);
+          
+          if (status?.portMappings) {
+            const mapping = status.portMappings.find(m => m.containerPort === (data.port || 3000));
+            if (mapping) {
+              setPreviewUrl(`http://localhost:${mapping.hostPort}`);
+            } else {
+              setPreviewUrl(`http://localhost:${data.port || 3000}`);
+            }
+          } else {
+            setPreviewUrl(`http://localhost:${data.port || 3000}`);
+          }
+        } catch (error) {
+          setPreviewUrl(`http://localhost:${data.port || 3000}`);
+        }
+        
+        setShowIframe(true);
+        setErrors([]);
+      } else {
+        setDevServerStatus('error');
+        setErrors([data.error || '啟動開發服務器失敗']);
+      }
     } catch (error) {
       console.error('啟動開發服務器失敗:', error);
       setDevServerStatus('error');
@@ -183,12 +188,13 @@ export function PreviewPanel({ containerId, projectStatus }: PreviewPanelProps) 
     }
   };
 
-  // 初始化檢查
+  // 初始化檢查（只在專案狀態變化時觸發，避免頻繁檢查）
   useEffect(() => {
     if (containerId && projectStatus === 'running') {
+      // 使用智能狀態管理器，只在必要時檢查
       checkDevServerStatus();
     }
-  }, [containerId, projectStatus, checkDevServerStatus]);
+  }, [containerId, projectStatus]); // 移除 checkDevServerStatus 依賴，避免無限循環
 
   const currentDevice = getCurrentDevice();
 

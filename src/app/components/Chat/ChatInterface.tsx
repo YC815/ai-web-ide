@@ -76,7 +76,7 @@ const DevServerStatusBar = ({ projectId }: { projectId: string }) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'docker_check_dev_server_status',
-          containerId: projectId,
+          containerId: projectId, // 這裡的 projectId 實際上是容器 ID
           parameters: {}
         })
       });
@@ -111,7 +111,7 @@ const DevServerStatusBar = ({ projectId }: { projectId: string }) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'docker_start_dev_server',
-          containerId: projectId,
+          containerId: projectId, // 這裡的 projectId 實際上是容器 ID
           parameters: {}
         })
       });
@@ -526,7 +526,7 @@ export function ChatInterface({
           message: userMessage,
           projectId: projectId || `ai-web-ide-${projectName.toLowerCase().replace(/\s+/g, '-')}`,
           projectName,
-          containerId: containerId,
+          containerId: containerId || projectId, // 確保傳遞容器 ID
           conversationId: activeWindowId,
           apiToken,
           enableAutoRepair: autoFixMode,
@@ -541,6 +541,7 @@ export function ChatInterface({
           message: userMessage,
           projectId: projectId || `ai-web-ide-${projectName.toLowerCase().replace(/\s+/g, '-')}`,
           projectName,
+          containerId: containerId || projectId, // 確保傳遞容器 ID
           conversationId: activeWindowId,
           apiToken,
           autoRepairMode: autoFixMode,
@@ -805,11 +806,13 @@ export function ChatInterface({
       const healthResponse = await fetch('/api/health');
       diagnostics.serverHealth = healthResponse.ok;
 
-      // 檢查 Docker 狀態（如果伺服器正常）
+      // 檢查 Docker 狀態（如果伺服器正常）- 使用智能管理器
       if (diagnostics.serverHealth) {
         try {
-          const dockerResponse = await fetch('/api/docker-status');
-          diagnostics.dockerStatus = dockerResponse.ok;
+          const { getSmartDockerStatusManager } = await import('@/lib/docker/smart-status-manager');
+          const manager = getSmartDockerStatusManager();
+          const allStatuses = manager.getAllCachedStatuses();
+          diagnostics.dockerStatus = allStatuses.size > 0; // 如果有快取狀態，表示 Docker 服務可用
         } catch {
           diagnostics.dockerStatus = false;
         }

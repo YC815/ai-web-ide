@@ -201,24 +201,26 @@ async function handleExecCommand(
       stdout: stdout.trim(),
       stderr: stderr.trim()
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Docker exec error:', error);
     
     // 檢查是否為 maxBuffer 錯誤
-    if (error.message && error.message.includes('maxBuffer')) {
+    if (error instanceof Error && error.message && error.message.includes('maxBuffer')) {
+      const execError = error as Error & { stdout?: string; stderr?: string };
       return NextResponse.json({
         success: false,
-        stdout: error.stdout || '',
-        stderr: error.stderr || '',
+        stdout: execError.stdout || '',
+        stderr: execError.stderr || '',
         error: '輸出內容過大，請嘗試使用更具體的路徑或減少遞迴深度。建議使用 tree 命令或指定具體目錄。'
       });
     }
 
+    const execError = error as Error & { stdout?: string; stderr?: string };
     return NextResponse.json({
       success: false,
-      stdout: error.stdout || '',
-      stderr: error.stderr || '',
-      error: error.message
+      stdout: execError.stdout || '',
+      stderr: execError.stderr || '',
+      error: execError.message || 'Unknown error'
     });
   }
 }
@@ -328,10 +330,10 @@ async function handleStatusCheck(containerRef: string) {
       status,
       output: `Container ${containerRef} status: ${status}`
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     return NextResponse.json({
       success: false,
-      error: `Failed to check container status: ${error.message}`,
+      error: `Failed to check container status: ${error instanceof Error ? error.message : 'Unknown error'}`,
       status: 'unknown'
     });
   }
@@ -366,7 +368,7 @@ async function handleHealthCheck(containerRef: string) {
           output: `Container health: ${healthStatus}`
         });
       }
-    } catch (healthError) {
+    } catch (_healthError) {
       // 如果沒有配置健康檢查，則認為容器健康（因為它在運行）
     }
 
@@ -378,18 +380,18 @@ async function handleHealthCheck(containerRef: string) {
         health: 'healthy',
         output: 'Container is running and responsive'
       });
-    } catch (execError) {
+    } catch (_execError) {
       return NextResponse.json({
         success: false,
         health: 'unhealthy',
         output: 'Container is running but not responsive'
       });
     }
-  } catch (error: any) {
+  } catch (error: unknown) {
     return NextResponse.json({
       success: false,
       health: 'unknown',
-      error: `Health check failed: ${error.message}`
+      error: `Health check failed: ${error instanceof Error ? error.message : 'Unknown error'}`
     });
   }
 }
@@ -406,11 +408,12 @@ async function handleGetLogs(containerRef: string) {
       stdout: stdout,
       output: 'Container logs retrieved successfully'
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const execError = error as Error & { stderr?: string };
     return NextResponse.json({
       success: false,
-      error: `Failed to get container logs: ${error.message}`,
-      stderr: error.stderr || ''
+      error: `Failed to get container logs: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      stderr: execError.stderr || ''
     });
   }
 }
@@ -427,11 +430,12 @@ async function handleStartContainer(containerRef: string) {
       stdout: stdout.trim(),
       output: `Container ${containerRef} started successfully`
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const execError = error as Error & { stderr?: string };
     return NextResponse.json({
       success: false,
-      error: `Failed to start container: ${error.message}`,
-      stderr: error.stderr || ''
+      error: `Failed to start container: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      stderr: execError.stderr || ''
     });
   }
 }
@@ -448,11 +452,12 @@ async function handleStopContainer(containerRef: string) {
       stdout: stdout.trim(),
       output: `Container ${containerRef} stopped successfully`
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const execError = error as Error & { stderr?: string };
     return NextResponse.json({
       success: false,
-      error: `Failed to stop container: ${error.message}`,
-      stderr: error.stderr || ''
+      error: `Failed to stop container: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      stderr: execError.stderr || ''
     });
   }
 }
@@ -469,11 +474,12 @@ async function handleRestartContainer(containerRef: string) {
       stdout: stdout.trim(),
       output: `Container ${containerRef} restarted successfully`
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const execError = error as Error & { stderr?: string };
     return NextResponse.json({
       success: false,
-      error: `Failed to restart container: ${error.message}`,
-      stderr: error.stderr || ''
+      error: `Failed to restart container: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      stderr: execError.stderr || ''
     });
   }
 } 

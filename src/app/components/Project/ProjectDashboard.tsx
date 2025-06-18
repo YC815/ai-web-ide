@@ -223,8 +223,44 @@ export function ProjectDashboard() {
     try {
       switch (action) {
         case 'enter':
-          console.log(`[ProjectDashboard] 準備導航到專案: /project/${projectId}`);
-          // 使用 Next.js router 替代 window.location.href
+          console.log(`[ProjectDashboard] 進入開發模式，專案: ${project.name}`);
+          
+          // 檢查容器狀態，如果未運行則自動啟動
+          if (project.containerStatus !== 'running') {
+            console.log(`[ProjectDashboard] 容器未運行，嘗試自動啟動...`);
+            
+            const startResponse = await fetch('/api/containers', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                action: 'start',
+                containerId: project.containerId
+              })
+            });
+            
+            const startResult = await startResponse.json();
+            console.log(`[ProjectDashboard] 容器啟動結果:`, startResult);
+            
+            if (startResult.success) {
+              // 更新本地狀態
+              setProjects(prev => prev.map(p => 
+                p.id === projectId 
+                  ? { ...p, containerStatus: 'running' }
+                  : p
+              ));
+              console.log(`[ProjectDashboard] 容器啟動成功，導航到專案頁面`);
+            } else {
+              console.warn(`[ProjectDashboard] 容器啟動失敗，但仍然導航到專案頁面: ${startResult.error}`);
+              // 即使啟動失敗，仍然進入專案頁面，讓用戶在專案頁面內處理
+            }
+            
+            // 等待一下讓容器有時間啟動
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
+          
+          console.log(`[ProjectDashboard] 導航到專案: /project/${projectId}`);
           router.push(`/project/${projectId}`);
           break;
           
