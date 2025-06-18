@@ -1,5 +1,10 @@
 // Langchain 聊天引擎 - 高品質重構版本
 // 專注於上下文管理、tool 調用和自動決策
+// 
+// @deprecated 此模組已棄用，請使用新的 aiChatSession 工具
+// 位置：src/lib/functions/ai/index.ts
+// 遷移指南：docs/unified-function-call-system.md
+
 import { ChatOpenAI } from "@langchain/openai";
 import { ConversationalRetrievalQAChain } from "langchain/chains";
 import { BufferMemory, ConversationBufferWindowMemory } from "langchain/memory";
@@ -1780,6 +1785,14 @@ export class LangchainChatEngine {
     
     // 導入分析
     const imports = content.match(/^import .+$/gm);
+// 統一 Function Call 系統整合
+import { 
+  createHighPriorityToolsForAgent,
+  selectToolsForRequest,
+  convertToLangchainTool 
+} from '../functions/langchain-binder';
+import { allTools, toolsByCategory } from '../functions/index';
+
     if (imports && imports.length > 0) {
       analysis.push(`📦 導入模組：${imports.length} 個`);
     }
@@ -1823,4 +1836,16 @@ export function createLangchainChatEngine(apiKey: string, options?: {
 }): LangchainChatEngine {
   return new LangchainChatEngine(apiKey, options);
 }
+
+/**
+ * 顯示遷移警告
+ * @deprecated 請使用新的 aiChatSession 工具替代
+ */
+export function showMigrationWarning(): void {
+  console.warn(`
+⚠️ LangchainChatEngine 已棄用
+請使用新的 aiChatSession 工具替代
+位置：src/lib/functions/ai/index.ts
+遷移指南：docs/unified-function-call-system.md
+  `);
 }

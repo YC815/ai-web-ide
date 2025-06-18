@@ -5,7 +5,7 @@
  */
 
 import { logger } from '../logger';
-import { StrictDockerTools } from './docker-tools-v2';
+// import { StrictDockerTools } from './docker-tools-v2'; // 已刪除，使用新的 docker 工具替代
 import { DockerAIEditorManager } from '../docker/ai-editor-manager';
 import { ToolResult } from './agent-controller';
 

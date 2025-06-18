@@ -1,5 +1,9 @@
 // OpenAI Function Calling 整合模組
 // 實現完整的 AI 編輯器與 OpenAI gpt-4o function calling 整合
+// 
+// @deprecated 此模組已棄用，請使用新的 aiChatSession 工具
+// 位置：src/lib/functions/ai/index.ts
+// 遷移指南：docs/unified-function-call-system.md
 
 import OpenAI from 'openai';
 import { 
@@ -476,6 +480,19 @@ export class OpenAIIntegration {
 // 工廠函數
 export function createOpenAIIntegration(config: OpenAIIntegrationConfig): OpenAIIntegration {
   return new OpenAIIntegration(config);
+}
+
+/**
+ * 顯示遷移警告
+ * @deprecated 請使用新的 aiChatSession 工具替代
+ */
+export function showMigrationWarning(): void {
+  console.warn(`
+⚠️ OpenAIIntegration 已棄用
+請使用新的 aiChatSession 工具替代
+位置：src/lib/functions/ai/index.ts
+遷移指南：docs/unified-function-call-system.md
+  `);
 }
 
 // 預設導出

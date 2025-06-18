@@ -1,9 +1,13 @@
 /**
  * AI 工具控制框架（Tool-calling Agent Controller）
  * 讓 AI 能夠有「先 tool → 看結果 → 再決定」的能力
+ * 
+ * @deprecated 此模組已棄用，請使用新的 aiAgentExecute 工具
+ * 位置：src/lib/functions/ai/index.ts
+ * 遷移指南：docs/unified-function-call-system.md
  */
 
-import { logger } from '../logger';
+import { logger } from '../core/logger';
 import { ToolRegistry } from '../docker/tool-registry';
 import { OpenAIService } from './openai-service';
 import { aiOutputLogger } from './ai-output-logger';
@@ -358,4 +362,17 @@ export class AgentController {
     this.log(`🧪 執行快速測試: ${testMessage}`);
     return await this.runAgentController(testMessage);
   }
+}
+
+/**
+ * 顯示遷移警告
+ * @deprecated 請使用新的 aiAgentExecute 工具替代
+ */
+export function showMigrationWarning(): void {
+  console.warn(`
+⚠️ AgentController 已棄用
+請使用新的 aiAgentExecute 工具替代
+位置：src/lib/functions/ai/index.ts
+遷移指南：docs/unified-function-call-system.md
+  `);
 } 

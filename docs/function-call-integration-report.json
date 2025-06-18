@@ -1,0 +1,20 @@
+{
+  "timestamp": "2025-06-18T04:34:07.518Z",
+  "testResults": {
+    "unifiedFunctions": false,
+    "individualTools": false,
+    "langchainBinding": false,
+    "binderCreation": true,
+    "engineUpdate": true,
+    "examplesCreation": true
+  },
+  "summary": {
+    "totalTests": 6,
+    "passedTests": 3,
+    "failedTests": 3
+  },
+  "recommendations": [
+    "修復統一 Function Call 系統的基本功能",
+    "檢查 Langchain 相關依賴是否正確安裝"
+  ]
+}

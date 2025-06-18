@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createLangchainChatEngine, LangchainChatResponse, LangchainChatEngine } from '../../../lib/ai/langchain-chat-engine';
-import { ProjectContext } from '../../../lib/ai/context-manager';
+// @deprecated LangchainChatEngine 和 AIContextManager 已棄用，請使用新的 aiChatSession 和 aiContextManager
+import { createLangchainChatEngine, LangchainChatResponse, LangchainChatEngine, showMigrationWarning } from '../../../lib/ai/langchain-chat-engine';
+import { ProjectContext, showMigrationWarning as showContextMigrationWarning } from '../../../lib/ai/context-manager';
 
 // 定義嚴格的類型
 export interface ToolCallResult {

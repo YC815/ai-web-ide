@@ -6,7 +6,7 @@
 import { logger } from '../logger';
 import { AgentController, AgentConfig } from './agent-controller';
 import { StrictToolRegistry } from './strict-tool-registry';
-import { StrictDockerTools } from './docker-tools-v2';
+// import { StrictDockerTools } from './docker-tools-v2'; // 已刪除，使用新的 docker 工具替代
 import { DockerAIEditorManager } from '../docker/ai-editor-manager';
 import { OpenAIService } from './openai-service';
 import { aiOutputLogger } from './ai-output-logger';

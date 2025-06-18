@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAIProjectAssistant } from './ai-project-assistant';
-import { createLangchainChatEngine, LangchainChatResponse } from '../../../lib/ai/langchain-chat-engine';
+// @deprecated LangchainChatEngine 已棄用，請使用新的 aiChatSession
+import { createLangchainChatEngine, LangchainChatResponse, showMigrationWarning } from '../../../lib/ai/langchain-chat-engine';
 
 // 專案名稱標準化函數 - 將前端的專案名稱映射到容器內的實際目錄名稱
 function normalizeProjectName(projectName: string, containerId?: string): string {

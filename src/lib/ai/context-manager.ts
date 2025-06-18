@@ -1,5 +1,10 @@
 
 // AI 上下文管理器 - 讓AI智能地掌握專案狀態
+// 
+// @deprecated 此模組已棄用，請使用新的 aiContextManager 工具
+// 位置：src/lib/functions/ai/index.ts
+// 遷移指南：docs/unified-function-call-system.md
+
 import { createDockerToolkit, DockerToolkit, DockerToolResponse, createDefaultDockerContext } from '../docker/tools';
 
 export interface ProjectContext {
@@ -396,6 +401,19 @@ ${suggestionsResult.data.map(s => `- ${s}`).join('\n')}
 // 工廠函數
 export function createAIContextManager(projectContext: ProjectContext): AIContextManager {
   return new AIContextManager(projectContext);
+}
+
+/**
+ * 顯示遷移警告
+ * @deprecated 請使用新的 aiContextManager 工具替代
+ */
+export function showMigrationWarning(): void {
+  console.warn(`
+⚠️ AIContextManager 已棄用
+請使用新的 aiContextManager 工具替代
+位置：src/lib/functions/ai/index.ts
+遷移指南：docs/unified-function-call-system.md
+  `);
 }
 
 // AI專案探索的使用指南

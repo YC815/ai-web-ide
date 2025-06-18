@@ -648,7 +648,8 @@ export class DockerHealthCheckTool {
 }
 
 // Docker 容器檔案系統工具
-import { DockerSecurityValidator } from '../ai/docker-security-validator';
+// @deprecated DockerSecurityValidator 已棄用，請使用新的 securityValidator
+import { DockerSecurityValidator, showMigrationWarning } from '../ai/docker-security-validator';
 
 export class DockerFileSystemTool {
   private securityValidator: DockerSecurityValidator;

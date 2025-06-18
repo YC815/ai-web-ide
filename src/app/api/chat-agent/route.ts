@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { SecureChatAgentIntegrator, SecureChatAgentConfig, SecureChatAgentResponse } from '../../../lib/ai/secure-chat-agent-integration';
+// @deprecated SecureChatAgentIntegrator 已棄用，請使用新的 aiChatSession
+import { SecureChatAgentIntegrator, SecureChatAgentConfig, SecureChatAgentResponse, showMigrationWarning } from '../../../lib/ai/secure-chat-agent-integration';
 import { logger } from '../../../lib/logger';
 
 // 全域管理安全聊天 Agent 實例
@@ -81,6 +82,9 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatAgent
     const currentConversationId = conversationId || `chat-agent-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
     logger.info(`[SecureAgent API] 🔒 處理安全聊天請求: ${currentConversationId} - ${message.substring(0, 50)}...`);
+
+    // 顯示遷移警告
+    showMigrationWarning();
 
     // 獲取或創建安全聊天 Agent 實例
     let secureAgent = secureAgentInstances.get(currentConversationId);

@@ -1,6 +1,10 @@
 /**
  * Docker 安全驗證器
  * 確保所有AI工具操作都嚴格限制在Docker容器內，防止意外操作宿主機檔案
+ * 
+ * @deprecated 此模組已棄用，請使用新的 securityValidator 工具
+ * 位置：src/lib/functions/system/index.ts
+ * 遷移指南：docs/unified-function-call-system.md
  */
 
 import { logger } from '../logger';
@@ -309,6 +313,19 @@ export class DockerSecurityValidator {
       timestamp: new Date().toISOString(),
     });
   }
+}
+
+/**
+ * 顯示遷移警告
+ * @deprecated 請使用新的 securityValidator 工具替代
+ */
+export function showMigrationWarning(): void {
+  console.warn(`
+⚠️ DockerSecurityValidator 已棄用
+請使用新的 securityValidator 工具替代
+位置：src/lib/functions/system/index.ts
+遷移指南：docs/unified-function-call-system.md
+  `);
 }
 
 // 導出單例實例

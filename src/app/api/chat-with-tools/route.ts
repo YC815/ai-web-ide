@@ -2,7 +2,8 @@
 // 整合 AI 編輯器工具和 OpenAI function calling，實現對話驅動式自動修正
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createOpenAIIntegration, OpenAIIntegrationConfig, OpenAIIntegration } from '@/lib/ai/openai';
+// @deprecated OpenAIIntegration 已棄用，請使用新的 aiChatSession
+import { createOpenAIIntegration, OpenAIIntegrationConfig, OpenAIIntegration, showMigrationWarning } from '@/lib/ai/openai';
 import { dockerConfigManager } from '@/lib/docker/config-manager';
 import { logger } from '@/lib/core/logger';
 

@@ -1,5 +1,42 @@
-import fs from 'fs';
-import path from 'path';
+import * as fs from 'fs';
+import * as path from 'path';
+
+// 保存原始的 console 方法 (從根目錄 logger.ts 移植)
+const originalConsole = {
+  log: console.log,
+  error: console.error,
+  warn: console.warn,
+  info: console.info
+};
+
+// 需要過濾的 API 路徑 (從根目錄 logger.ts 移植)
+const FILTERED_PATHS = [
+  '/api/docker-status',
+  '/api/docker-containers',
+  'GET /api/docker-status',
+  'POST /api/docker-status'
+];
+
+// 檢查是否應該過濾此日誌 (從根目錄 logger.ts 移植)
+function shouldFilterLog(message: string): boolean {
+  return FILTERED_PATHS.some(path => 
+    message.includes(path) && (
+      message.includes('200 in') || 
+      message.includes('GET ') || 
+      message.includes('POST ')
+    )
+  );
+}
+
+// 創建過濾版本的 console 方法 (從根目錄 logger.ts 移植)
+function createFilteredConsole(originalMethod: (...args: any[]) => void) {
+  return (...args: any[]) => {
+    const message = args.join(' ');
+    if (!shouldFilterLog(message)) {
+      originalMethod.apply(console, args);
+    }
+  };
+}
 
 export enum LogLevel {
   DEBUG = 0,
@@ -23,6 +60,7 @@ export class Logger {
   private logFile: string;
   private logBuffer: LogEntry[] = [];
   private flushInterval: NodeJS.Timeout;
+  private context: string = 'System';
 
   private constructor() {
     // 創建日誌目錄
@@ -52,20 +90,58 @@ export class Logger {
     this.logLevel = level;
   }
 
-  debug(category: string, message: string, data?: any): void {
-    this.log(LogLevel.DEBUG, category, message, data);
+  setContext(context: string): void {
+    this.context = context;
   }
 
-  info(category: string, message: string, data?: any): void {
-    this.log(LogLevel.INFO, category, message, data);
+  debug(categoryOrMessage: string, message?: string, data?: any): void {
+    if (typeof message === 'undefined') {
+      // 單參數模式 (兼容根目錄 logger.ts)
+      this.log(LogLevel.DEBUG, this.context, categoryOrMessage, data);
+    } else {
+      // 雙參數模式 (原有模式)
+      this.log(LogLevel.DEBUG, categoryOrMessage, message, data);
+    }
   }
 
-  warn(category: string, message: string, data?: any): void {
-    this.log(LogLevel.WARN, category, message, data);
+  info(categoryOrMessage: string, message?: string, data?: any): void {
+    if (typeof message === 'undefined') {
+      // 單參數模式 (兼容根目錄 logger.ts)
+      this.log(LogLevel.INFO, this.context, categoryOrMessage, data);
+    } else {
+      // 雙參數模式 (原有模式)
+      this.log(LogLevel.INFO, categoryOrMessage, message, data);
+    }
   }
 
-  error(category: string, message: string, error?: Error, data?: any): void {
-    this.log(LogLevel.ERROR, category, message, data, error);
+  warn(categoryOrMessage: string, message?: string, data?: any): void {
+    if (typeof message === 'undefined') {
+      // 單參數模式 (兼容根目錄 logger.ts)
+      this.log(LogLevel.WARN, this.context, categoryOrMessage, data);
+    } else {
+      // 雙參數模式 (原有模式)
+      this.log(LogLevel.WARN, categoryOrMessage, message, data);
+    }
+  }
+
+  error(categoryOrMessage: string, messageOrError?: string | Error, errorOrData?: Error | any, data?: any): void {
+    if (typeof messageOrError === 'undefined') {
+      // 單參數模式 (兼容根目錄 logger.ts)
+      this.log(LogLevel.ERROR, this.context, categoryOrMessage);
+    } else if (typeof messageOrError === 'string') {
+      // 雙參數模式 (原有模式)
+      this.log(LogLevel.ERROR, categoryOrMessage, messageOrError, errorOrData, data);
+    } else {
+      // 根目錄 logger.ts 的錯誤處理模式
+      const errorData = messageOrError instanceof Error ? {
+        name: messageOrError.name,
+        message: messageOrError.message,
+        stack: messageOrError.stack,
+        ...errorOrData
+      } : { error: messageOrError, ...errorOrData };
+      
+      this.log(LogLevel.ERROR, this.context, categoryOrMessage, errorData);
+    }
   }
 
   private log(level: LogLevel, category: string, message: string, data?: any, error?: Error): void {
@@ -84,7 +160,7 @@ export class Logger {
 
     this.logBuffer.push(entry);
 
-    // 同時輸出到控制台
+    // 同時輸出到控制台 (加入過濾功能)
     this.logToConsole(entry);
 
     // 如果是錯誤級別，立即刷新到檔案
@@ -97,19 +173,25 @@ export class Logger {
     const levelStr = LogLevel[entry.level];
     const timestamp = entry.timestamp.split('T')[1].split('.')[0];
     const prefix = `[${timestamp}] ${levelStr} [${entry.category}]`;
+    const fullMessage = `${prefix} ${entry.message}`;
+
+    // 應用過濾邏輯
+    if (shouldFilterLog(fullMessage)) {
+      return;
+    }
 
     switch (entry.level) {
       case LogLevel.DEBUG:
-        console.debug(`🔍 ${prefix}`, entry.message, entry.data || '');
+        originalConsole.log(`🔍 ${fullMessage}`, entry.data || '');
         break;
       case LogLevel.INFO:
-        console.info(`ℹ️ ${prefix}`, entry.message, entry.data || '');
+        originalConsole.info(`ℹ️ ${fullMessage}`, entry.data || '');
         break;
       case LogLevel.WARN:
-        console.warn(`⚠️ ${prefix}`, entry.message, entry.data || '');
+        originalConsole.warn(`⚠️ ${fullMessage}`, entry.data || '');
         break;
       case LogLevel.ERROR:
-        console.error(`❌ ${prefix}`, entry.message, entry.error || entry.data || '');
+        originalConsole.error(`❌ ${fullMessage}`, entry.error || entry.data || '');
         break;
     }
   }
@@ -160,10 +242,27 @@ export class Logger {
     }
     this.flushLogs();
   }
+
+  // 應用日誌過濾器 (從根目錄 logger.ts 移植)
+  applyLogFilter(): void {
+    console.log = createFilteredConsole(originalConsole.log);
+    console.info = createFilteredConsole(originalConsole.info);
+    console.warn = createFilteredConsole(originalConsole.warn);
+  }
+
+  // 移除日誌過濾器 (從根目錄 logger.ts 移植)
+  removeLogFilter(): void {
+    Object.assign(console, originalConsole);
+  }
 }
 
 // 創建全域日誌實例
 export const logger = Logger.getInstance();
+
+// 在開發模式下自動應用過濾器
+if (process.env.NODE_ENV === 'development') {
+  logger.applyLogFilter();
+}
 
 // 工具特定的日誌器
 export class ToolLogger {
@@ -198,7 +297,12 @@ export class ToolLogger {
     });
   }
 
-  logToolError(error: Error, executionTime: number): void {
-    this.error(`Tool failed after ${executionTime}ms`, error);
+  logToolError(error: Error, parameters: any): void {
+    this.error(`Tool execution failed`, error, { parameters });
   }
+}
+
+// 創建專用日誌器的工廠函數
+export function createToolLogger(toolName: string): ToolLogger {
+  return new ToolLogger(toolName, logger);
 } 

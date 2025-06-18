@@ -2,6 +2,10 @@
  * 安全聊天 AI 與 Agent 控制框架整合模組
  * 使用嚴格的 Docker 工具，完全鎖定在容器內專案目錄
  * 替換不安全的舊版 ChatAgentIntegrator
+ * 
+ * @deprecated 此模組已棄用，請使用新的 aiChatSession 工具
+ * 位置：src/lib/functions/ai/index.ts
+ * 遷移指南：docs/unified-function-call-system.md
  */
 
 import { logger } from '../logger';
@@ -453,4 +457,17 @@ ${toolStats?.toolNames?.map((tool: string) => `- ${tool}`).join('\n') || '- 工�
     // 重置嚴格工廠（如果需要）
     // this.strictAgentFactory.reset();
   }
+}
+
+/**
+ * 顯示遷移警告
+ * @deprecated 請使用新的 aiChatSession 工具替代
+ */
+export function showMigrationWarning(): void {
+  console.warn(`
+⚠️ SecureChatAgentIntegrator 已棄用
+請使用新的 aiChatSession 工具替代
+位置：src/lib/functions/ai/index.ts
+遷移指南：docs/unified-function-call-system.md
+  `);
 } 

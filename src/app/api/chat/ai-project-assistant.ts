@@ -1,6 +1,7 @@
 // AI 專案助理 - 整合所有AI工具，讓AI智能地探索和管理專案
 // 支援自動修正模式，實現對話驅動式自動修正
-import { createAIContextManager, ProjectContext, ProjectSnapshot } from '../../../lib/ai/context-manager';
+// @deprecated AIContextManager 已棄用，請使用新的 aiContextManager
+import { createAIContextManager, ProjectContext, ProjectSnapshot, showMigrationWarning } from '../../../lib/ai/context-manager';
 import { createDockerToolkit, DockerToolkit, createDefaultDockerContext } from '../../../lib/docker/tools';
 import { 
   DynamicPromptBuilder, 

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { AgentFactory } from '../../../lib/ai';
+// @deprecated AgentFactory 已棄用，請使用新的 aiAgentExecute
+import { AgentFactory, showMigrationWarning } from '../../../lib/ai';
 import { logger } from '../../../lib/logger';
 
 export async function POST(request: NextRequest) {
@@ -16,6 +17,9 @@ export async function POST(request: NextRequest) {
     }
 
     logger.info(`[API:Agent] 收到請求: ${message.substring(0, 100)}...`);
+
+    // 顯示遷移警告
+    showMigrationWarning();
 
     // 建立 Agent 並執行
     const factory = AgentFactory.getInstance();
