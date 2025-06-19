@@ -329,33 +329,124 @@ export class DockerDevServerTool {
    */
   private async executeInContainer(command: string[]): Promise<DockerToolResponse> {
     try {
-      // 構建正確的 API URL
-      const apiUrl = typeof window !== 'undefined' 
-        ? '/api/docker'  // 客戶端環境
-        : `${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/api/docker`;  // 服務器端環境
+      // 1. 嚴格驗證 Docker 上下文
+      if (!this.dockerContext.containerId) {
+        return {
+          success: false,
+          error: '無效的 Docker 容器 ID'
+        };
+      }
 
-      const response = await fetch(apiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'exec',
-          containerId: this.dockerContext.containerId,
-          command,
-          workingDirectory: this.dockerContext.workingDirectory
-        })
-      });
+      // 2. 確保命令不包含危險操作 - 修復過於嚴格的檢測
+      const commandStr = command.join(' ');
+      const dangerousPatterns = [
+        'rm -rf /',
+        'chmod 777',
+        'sudo',
+        'su -',
+        'mount',
+        'umount',
+        'docker',
+        '/etc/passwd',
+        '/etc/shadow',
+        'curl.*download',
+        'wget.*download',
+        // 移除對基本管道操作的限制，只限制危險的rm操作
+        'rm.*-rf.*\\|',
+        ';.*rm.*-rf',
+        '&&.*rm.*-rf'
+      ];
 
-      const result = await response.json();
+      for (const pattern of dangerousPatterns) {
+        if (new RegExp(pattern, 'i').test(commandStr)) {
+          return {
+            success: false,
+            error: `命令包含危險操作模式: ${pattern}`
+          };
+        }
+      }
+
+      // 3. 記錄容器操作
+      console.log(`🐳 在 Docker 容器 ${this.dockerContext.containerId} 內執行命令:`, command);
+
+      // 4. 構建 Docker exec 命令
+      const dockerExecCommand = [
+        'docker', 'exec',
+        '--workdir', this.dockerContext.workingDirectory || '/app',
+        this.dockerContext.containerId,
+        ...command
+      ];
+
+      // 5. 執行命令
+      const startTime = Date.now();
+      const { spawn } = await import('child_process');
       
-      return {
-        success: result.success,
-        containerOutput: result.stdout || result.stderr,
-        error: result.success ? undefined : result.error || result.stderr
-      };
+      return new Promise((resolve) => {
+        let stdout = '';
+        let stderr = '';
+        
+        const process = spawn(dockerExecCommand[0], dockerExecCommand.slice(1), {
+          stdio: ['pipe', 'pipe', 'pipe'],
+          timeout: 30000, // 30秒超時
+        });
+
+        process.stdout?.on('data', (data) => {
+          stdout += data.toString();
+        });
+
+        process.stderr?.on('data', (data) => {
+          stderr += data.toString();
+        });
+
+        process.on('close', (code) => {
+          const duration = Date.now() - startTime;
+          const success = code === 0;
+          
+          console.log(`🐳 Docker 容器命令執行完成 (${duration}ms):`, {
+            containerId: this.dockerContext.containerId,
+            command: command.join(' '),
+            success,
+            code
+          });
+
+          if (success) {
+            resolve({
+              success: true,
+              containerOutput: stdout,
+              message: `命令在 Docker 容器內執行成功 (${duration}ms)`
+            });
+          } else {
+            resolve({
+              success: false,
+              error: stderr || `命令執行失敗，退出碼: ${code}`,
+              containerOutput: stdout
+            });
+          }
+        });
+
+        process.on('error', (error) => {
+          console.error('🐳 Docker 容器命令執行錯誤:', error);
+          resolve({
+            success: false,
+            error: `Docker 命令執行錯誤: ${error.message}`
+          });
+        });
+
+        // 超時處理
+        setTimeout(() => {
+          if (!process.killed) {
+            process.kill();
+            resolve({
+              success: false,
+              error: '命令執行超時 (30秒)'
+            });
+          }
+        }, 30000);
+      });
     } catch (error) {
       return {
         success: false,
-        error: `Docker執行失敗: ${error instanceof Error ? error.message : 'Unknown error'}`
+        error: `Docker 容器內命令執行失敗: ${error instanceof Error ? error.message : 'Unknown error'}`
       };
     }
   }
@@ -930,69 +1021,124 @@ export class DockerFileSystemTool {
    */
   private async executeInContainer(command: string[]): Promise<DockerToolResponse> {
     try {
-      console.log('DockerFileSystemTool: Executing command in container', {
-        containerId: this.dockerContext.containerId,
-        containerName: this.dockerContext.containerName,
-        command,
-        workingDirectory: this.dockerContext.workingDirectory
-      });
-
-      const apiUrl = typeof window !== 'undefined' 
-        ? '/api/docker'
-        : `${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/api/docker`;
-
-      console.log('DockerFileSystemTool: Using API URL:', apiUrl);
-
-      const response = await fetch(apiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'exec',
-          containerId: this.dockerContext.containerId,
-          command,
-          workingDirectory: this.dockerContext.workingDirectory
-        })
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('DockerFileSystemTool: API response not ok', {
-          status: response.status,
-          statusText: response.statusText,
-          errorText,
-          apiUrl
-        });
+      // 1. 嚴格驗證 Docker 上下文
+      if (!this.dockerContext.containerId) {
         return {
           success: false,
-          error: `Docker API 調用失敗: ${response.status} ${response.statusText} - ${errorText}`
+          error: '無效的 Docker 容器 ID'
         };
       }
 
-      const result = await response.json();
+      // 2. 確保命令不包含危險操作 - 修復過於嚴格的檢測
+      const commandStr = command.join(' ');
+      const dangerousPatterns = [
+        'rm -rf /',
+        'chmod 777',
+        'sudo',
+        'su -',
+        'mount',
+        'umount',
+        'docker',
+        '/etc/passwd',
+        '/etc/shadow',
+        'curl.*download',
+        'wget.*download',
+        // 移除對基本管道操作的限制，只限制危險的rm操作
+        'rm.*-rf.*\\|',
+        ';.*rm.*-rf',
+        '&&.*rm.*-rf'
+      ];
+
+      for (const pattern of dangerousPatterns) {
+        if (new RegExp(pattern, 'i').test(commandStr)) {
+          return {
+            success: false,
+            error: `命令包含危險操作模式: ${pattern}`
+          };
+        }
+      }
+
+      // 3. 記錄容器操作
+      console.log(`🐳 在 Docker 容器 ${this.dockerContext.containerId} 內執行命令:`, command);
+
+      // 4. 構建 Docker exec 命令
+      const dockerExecCommand = [
+        'docker', 'exec',
+        '--workdir', this.dockerContext.workingDirectory || '/app',
+        this.dockerContext.containerId,
+        ...command
+      ];
+
+      // 5. 執行命令
+      const startTime = Date.now();
+      const { spawn } = await import('child_process');
       
-      console.log('DockerFileSystemTool: API response received', {
-        success: result.success,
-        hasStdout: !!result.stdout,
-        hasStderr: !!result.stderr,
-        error: result.error
+      return new Promise((resolve) => {
+        let stdout = '';
+        let stderr = '';
+        
+        const process = spawn(dockerExecCommand[0], dockerExecCommand.slice(1), {
+          stdio: ['pipe', 'pipe', 'pipe'],
+          timeout: 30000, // 30秒超時
+        });
+
+        process.stdout?.on('data', (data) => {
+          stdout += data.toString();
+        });
+
+        process.stderr?.on('data', (data) => {
+          stderr += data.toString();
+        });
+
+        process.on('close', (code) => {
+          const duration = Date.now() - startTime;
+          const success = code === 0;
+          
+          console.log(`🐳 Docker 容器命令執行完成 (${duration}ms):`, {
+            containerId: this.dockerContext.containerId,
+            command: command.join(' '),
+            success,
+            code
+          });
+
+          if (success) {
+            resolve({
+              success: true,
+              containerOutput: stdout,
+              message: `命令在 Docker 容器內執行成功 (${duration}ms)`
+            });
+          } else {
+            resolve({
+              success: false,
+              error: stderr || `命令執行失敗，退出碼: ${code}`,
+              containerOutput: stdout
+            });
+          }
+        });
+
+        process.on('error', (error) => {
+          console.error('🐳 Docker 容器命令執行錯誤:', error);
+          resolve({
+            success: false,
+            error: `Docker 命令執行錯誤: ${error.message}`
+          });
+        });
+
+        // 超時處理
+        setTimeout(() => {
+          if (!process.killed) {
+            process.kill();
+            resolve({
+              success: false,
+              error: '命令執行超時 (30秒)'
+            });
+          }
+        }, 30000);
       });
-      
-      return {
-        success: result.success,
-        containerOutput: result.stdout || result.stderr,
-        error: result.success ? undefined : (result.error || result.stderr || 'Docker 執行失敗，無具體錯誤信息')
-      };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      console.error('DockerFileSystemTool: Exception during API call', {
-        error: errorMessage,
-        containerId: this.dockerContext.containerId,
-        command
-      });
-      
       return {
         success: false,
-        error: `Docker執行失敗: ${errorMessage}`
+        error: `Docker 容器內命令執行失敗: ${error instanceof Error ? error.message : 'Unknown error'}`
       };
     }
   }

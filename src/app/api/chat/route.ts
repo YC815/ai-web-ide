@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAIProjectAssistant } from './ai-project-assistant';
 // @deprecated LangchainChatEngine 已棄用，請使用新的 aiChatSession
-import { createLangchainChatEngine, LangchainChatResponse, showMigrationWarning } from '../../../lib/ai/langchain-chat-engine';
+import { createLangChainChatEngine, showMigrationWarning } from '../../../lib/ai/langchain-chat-engine';
 
 // 專案名稱標準化函數 - 將前端的專案名稱映射到容器內的實際目錄名稱
 function normalizeProjectName(projectName: string, containerId?: string): string {
@@ -79,7 +79,7 @@ export interface ChatResponse {
 const conversationInstances = new Map<string, ReturnType<typeof createAIProjectAssistant>>();
 
 // Langchain 引擎實例管理
-const langchainEngines = new Map<string, ReturnType<typeof createLangchainChatEngine>>();
+const langchainEngines = new Map<string, ReturnType<typeof createLangChainChatEngine>>();
 
 // 自動修正會話狀態管理
 interface AutoRepairState {
@@ -145,11 +145,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatRespo
       
       if (!chatEngine) {
         console.log(`🚀 創建新的 Langchain 聊天引擎: ${engineKey}`);
-        chatEngine = createLangchainChatEngine(apiToken, {
-          model: 'gpt-4o',
-          temperature: 0.1,
-          maxTokens: 100000
-        });
+        chatEngine = await createLangChainChatEngine([], normalizedProjectName);
         langchainEngines.set(engineKey, chatEngine);
       }
 
@@ -167,19 +163,15 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatRespo
       console.log(`🔧 專案名稱標準化: "${projectName}" -> "${normalizedProjectName}" (容器: ${containerId})`);;
 
       // 使用 Langchain 引擎處理訊息
-      const langchainResponse: LangchainChatResponse = await chatEngine.processMessage(
-        currentConversationId,
-        message,
-        projectContext
-      );
+      const langchainResponse = await chatEngine.run(message);
 
       responseData = {
-        message: langchainResponse.message,
+        message: langchainResponse,
         conversationId: currentConversationId,
-        projectReport: langchainResponse.toolCalls ? `工具調用: ${langchainResponse.toolCalls.length} 次` : undefined,
-        suggestions: langchainResponse.autoActions,
-        actionsTaken: langchainResponse.autoActions,
-        needsUserInput: langchainResponse.needsUserInput,
+        projectReport: undefined,
+        suggestions: undefined,
+        actionsTaken: undefined,
+        needsUserInput: false,
         autoRepairMode: false
       };
     } else {

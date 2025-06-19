@@ -30,7 +30,7 @@ export const DOCKER_CONTEXTS = {
     projectName: 'web_test',
     hasPackageJson: true
   },
-  
+
   // Docker Test 容器
   dockerTest: {
     containerId: '26a41a4ea7ec',
@@ -40,7 +40,7 @@ export const DOCKER_CONTEXTS = {
     projectName: 'docker_test',
     hasPackageJson: true
   },
-  
+
   // Minecraft Info 容器
   minecraftInfo: {
     containerId: '7df86921d2ab',
@@ -50,7 +50,7 @@ export const DOCKER_CONTEXTS = {
     projectName: 'minecraft_info',
     hasPackageJson: false
   },
-  
+
   // Test 容器
   test: {
     containerId: '22f4b689ef71',
@@ -68,7 +68,7 @@ export const DOCKER_CONTEXTS = {
 export async function refreshDockerContexts(): Promise<void> {
   try {
     console.log('🔄 正在刷新 Docker 容器狀態...');
-    
+
     const { stdout } = await execAsync('docker ps -a --format "{{.ID}}\t{{.Names}}\t{{.Status}}"');
     const containers = stdout.trim().split('\n').map(line => {
       const [id, name, status] = line.split('\t');
@@ -77,12 +77,12 @@ export async function refreshDockerContexts(): Promise<void> {
 
     // 動態更新容器狀態
     for (const container of containers) {
-      const context = Object.values(DOCKER_CONTEXTS).find(ctx => 
+      const context = Object.values(DOCKER_CONTEXTS).find(ctx =>
         ctx.containerId.startsWith(container.id) || ctx.containerName === container.name
       );
-      
+
       if (context) {
-        // @ts-ignore - 動態更新狀態
+        // @ts-expect-error - 動態更新狀態
         context.status = container.status as 'running' | 'stopped';
       }
     }
@@ -98,10 +98,10 @@ export async function refreshDockerContexts(): Promise<void> {
  */
 export async function getDockerContextById(containerId: string): Promise<DockerContext | null> {
   // 首先從靜態配置中查找
-  let context = Object.values(DOCKER_CONTEXTS).find(ctx => 
+  const context = Object.values(DOCKER_CONTEXTS).find(ctx =>
     ctx.containerId === containerId || ctx.containerId.startsWith(containerId)
   );
-  
+
   if (context) {
     return {
       containerId: context.containerId,
@@ -114,25 +114,25 @@ export async function getDockerContextById(containerId: string): Promise<DockerC
   // 如果靜態配置中找不到，嘗試動態檢測
   try {
     console.log(`🔍 靜態配置中未找到容器 ${containerId}，嘗試動態檢測...`);
-    
+
     const { stdout } = await execAsync(`docker inspect ${containerId} --format "{{.Id}}\t{{.Name}}\t{{.State.Status}}"`);
     const [fullId, name, status] = stdout.trim().split('\t');
-    
+
     if (fullId && name) {
       console.log(`✅ 動態檢測到容器: ${fullId.substring(0, 12)} (${name})`);
-      
+
       // 從容器名稱推斷專案名稱和工作目錄
       const containerName = name.startsWith('/') ? name.substring(1) : name;
       const projectName = extractProjectNameFromContainer(containerName);
       const workingDirectory = projectName ? `/app/workspace/${projectName}` : '/app/workspace';
-      
+
       console.log(`🔧 動態檢測容器配置:`, {
         containerId: fullId.substring(0, 12),
         containerName,
         projectName,
         workingDirectory
       });
-      
+
       const dynamicContext = {
         containerId: fullId.substring(0, 12),
         containerName: containerName,
@@ -142,13 +142,13 @@ export async function getDockerContextById(containerId: string): Promise<DockerC
 
       // 將動態檢測的容器加入配置（記憶體中）
       await addDynamicContainer(dynamicContext, projectName);
-      
+
       return dynamicContext;
     }
   } catch (error) {
     console.warn(`⚠️ 無法動態檢測容器 ${containerId}:`, error);
   }
-  
+
   return null;
 }
 
@@ -157,7 +157,7 @@ export async function getDockerContextById(containerId: string): Promise<DockerC
  */
 function extractProjectNameFromContainer(containerName: string): string | null {
   console.log(`🔍 正在從容器名稱提取專案名稱: ${containerName}`);
-  
+
   // 匹配 ai-web-ide-{project-name}-{timestamp} 格式
   const match = containerName.match(/^ai-web-ide-(.+?)-\d+$/);
   if (match) {
@@ -166,7 +166,7 @@ function extractProjectNameFromContainer(containerName: string): string | null {
     console.log(`✅ 成功提取專案名稱: ${rawProjectName} -> ${normalizedName}`);
     return normalizedName;
   }
-  
+
   // 如果無法匹配，嘗試其他常見格式
   if (containerName.includes('web-ide')) {
     const parts = containerName.split('-');
@@ -186,7 +186,7 @@ function extractProjectNameFromContainer(containerName: string): string | null {
       }
     }
   }
-  
+
   console.log(`❌ 無法從容器名稱提取專案名稱: ${containerName}`);
   return null;
 }
@@ -199,32 +199,79 @@ export function normalizeProjectName(projectName: string): string {
 }
 
 /**
- * 根據容器名稱獲取 Docker 上下文
+ * 根據容器名稱獲取 Docker 上下文（增強版，支援動態檢測）
  */
-export function getDockerContextByName(containerName: string): DockerContext | null {
-  const context = Object.values(DOCKER_CONTEXTS).find(ctx => 
-    ctx.containerName === containerName || ctx.containerName.includes(containerName)
+export async function getDockerContextByName(projectName: string): Promise<DockerContext | null> {
+  const normalizedProjectName = normalizeProjectName(projectName);
+
+  // 首先從靜態配置中查找
+  const staticContext = Object.values(DOCKER_CONTEXTS).find(ctx =>
+    ctx.projectName === normalizedProjectName
   );
-  
-  if (!context) {
-    return null;
+
+  if (staticContext) {
+    return {
+      containerId: staticContext.containerId,
+      containerName: staticContext.containerName,
+      workingDirectory: staticContext.workingDirectory,
+      status: staticContext.status
+    };
   }
-  
-  return {
-    containerId: context.containerId,
-    containerName: context.containerName,
-    workingDirectory: context.workingDirectory,
-    status: context.status
-  };
+
+  // 如果靜態配置中找不到，嘗試動態檢測
+  try {
+    console.log(`🔍 靜態配置中未找到專案 ${normalizedProjectName}，嘗試動態檢測...`);
+
+    // 使用 grep 來進行模糊查找，以匹配包含專案名稱的容器
+    const command = `docker ps --format "{{.ID}}\\t{{.Names}}\\t{{.State}}"`;
+    console.log(`[getDockerContextByName] Executing command: ${command}`);
+    const { stdout } = await execAsync(command);
+
+    if (!stdout.trim()) {
+      console.warn(`⚠️ 找不到正在運行的容器。`);
+      return null;
+    }
+
+    // 在 JavaScript 中過濾，而不是依賴 grep
+    const lines = stdout.trim().split('\n');
+    const matchingLine = lines.find(line => line.includes(projectName));
+    
+    if (!matchingLine) {
+      console.warn(`⚠️ 找不到名為或包含 ${projectName} 的正在運行的容器。`);
+      return null;
+    }
+
+    // 取第一個匹配的容器
+    const [id, name, status] = matchingLine.split('\t');
+
+    if (id && name) {
+      console.log(`✅ 動態檢測到容器: ${id.substring(0, 12)} (${name})`);
+
+      const dynamicContext = {
+        containerId: id.substring(0, 12),
+        containerName: name,
+        workingDirectory: `/app/workspace/${normalizedProjectName}`,
+        status: status === 'running' ? 'running' as const : 'stopped' as const,
+      };
+
+      await addDynamicContainer(dynamicContext, normalizedProjectName);
+
+      return dynamicContext;
+    }
+  } catch (error) {
+    console.warn(`⚠️ 動態檢測專案 ${normalizedProjectName} 的容器時出錯:`, error);
+  }
+
+  return null;
 }
 
 /**
  * 動態加入容器配置
  */
-async function addDynamicContainer(context: DockerContext, projectName?: string): Promise<void> {
+async function addDynamicContainer(context: DockerContext, projectName?: string | null): Promise<void> {
   const dynamicKey = `dynamic_${context.containerId}`;
-  
-  // @ts-ignore - 動態添加配置
+
+  // @ts-expect-error - 動態添加配置
   DOCKER_CONTEXTS[dynamicKey] = {
     containerId: context.containerId,
     containerName: context.containerName,
@@ -233,7 +280,7 @@ async function addDynamicContainer(context: DockerContext, projectName?: string)
     projectName: projectName || context.containerName.replace(/^ai-web-ide-|-\d+$/g, ''),
     hasPackageJson: true // 預設為 true
   };
-  
+
   console.log(`📦 已動態加入容器配置: ${context.containerId} (${context.containerName})`);
 }
 
@@ -255,7 +302,7 @@ export function getAllDockerContexts(): DockerContext[] {
 export function createDefaultDockerContext(): DockerContext {
   // 優先使用當前容器
   const defaultContext = DOCKER_CONTEXTS.currentWebTest;
-  
+
   return {
     containerId: defaultContext.containerId,
     containerName: defaultContext.containerName,
@@ -272,16 +319,16 @@ export async function validateDockerContext(context: DockerContext): Promise<boo
   if (!context.containerId || !context.containerName || !context.workingDirectory) {
     return false;
   }
-  
+
   // 檢查容器ID格式（至少12個字符）
   if (context.containerId.length < 12) {
     return false;
   }
-  
+
   // 檢查是否為測試容器ID
-  if (context.containerId.includes('-container') || 
-      context.containerId.startsWith('test-') || 
-      context.containerId.startsWith('dev-')) {
+  if (context.containerId.includes('-container') ||
+    context.containerId.startsWith('test-') ||
+    context.containerId.startsWith('dev-')) {
     return false;
   }
 
@@ -289,7 +336,7 @@ export async function validateDockerContext(context: DockerContext): Promise<boo
   try {
     const { stdout } = await execAsync(`docker inspect ${context.containerId} --format "{{.State.Status}}"`);
     const status = stdout.trim();
-    
+
     if (status === 'running') {
       return true;
     } else {
@@ -312,10 +359,10 @@ export async function autoFixDockerConnection(problemContainerId?: string): Prom
 }> {
   try {
     console.log('🔧 開始自動診斷 Docker 連接問題...');
-    
+
     // 1. 刷新容器狀態
     await refreshDockerContexts();
-    
+
     // 2. 如果指定了問題容器，嘗試修復
     if (problemContainerId) {
       const context = await getDockerContextById(problemContainerId);
@@ -330,7 +377,7 @@ export async function autoFixDockerConnection(problemContainerId?: string): Prom
         }
       }
     }
-    
+
     // 3. 找到最佳可用容器
     const allContexts = getAllDockerContexts();
     for (const context of allContexts) {
@@ -343,12 +390,12 @@ export async function autoFixDockerConnection(problemContainerId?: string): Prom
         };
       }
     }
-    
+
     return {
       success: false,
       message: '❌ 未找到可用的 Docker 容器'
     };
-    
+
   } catch (error) {
     return {
       success: false,

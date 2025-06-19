@@ -20,14 +20,14 @@
     "test:e2e": "jest --testPathPattern=tests/e2e"
   },
   "dependencies": {
-    "@langchain/core": "^0.3.59",
-    "@langchain/openai": "^0.5.13",
+    "@langchain/core": "^0.4.5",
+    "@langchain/openai": "^0.6.0",
     "@types/better-sqlite3": "^7.6.13",
     "better-sqlite3": "^11.10.0",
     "diff": "^8.0.2",
     "diff-match-patch": "^1.0.5",
     "jsdiff": "^1.1.1",
-    "langchain": "^0.3.28",
+    "langchain": "^0.4.6",
     "next": "15.3.3",
     "openai": "^5.3.0",
     "react": "^19.0.0",

@@ -58,34 +58,40 @@ export class DockerSecurityValidator {
    * 驗證檔案路徑是否安全（嚴格限制在專案工作區內）
    */
   validateFilePath(filePath: string, dockerContext: DockerContext, projectName?: string): SecurityValidationResult {
-    // 正規化路徑
+    // 1. 首先驗證 Docker 上下文
+    const dockerValidation = this.validateDockerContext(dockerContext, projectName);
+    if (!dockerValidation.isValid) {
+      return dockerValidation;
+    }
+
+    // 2. 正規化路徑
     const normalizedPath = this.normalizePath(filePath, dockerContext.workingDirectory);
     
-    // 在嚴格模式下，必須在專案工作區內
+    // 3. 嚴格檢查：必須在 Docker 容器的專案工作區內
     const isInWorkspace = this.isProjectWorkspacePath(normalizedPath, projectName);
     
-    if (this.strictMode && !isInWorkspace) {
+    if (!isInWorkspace) {
       const suggestedPath = projectName 
         ? this.relocateToProjectWorkspace(filePath, projectName)
         : this.sanitizeFilePath(filePath);
         
       return {
         isValid: false,
-        reason: `檔案路徑必須在專案工作區內: ${normalizedPath}`,
+        reason: `路徑必須在 Docker 容器的專案工作區內: ${normalizedPath}。當前限制：/app/workspace/${projectName || '*'}`,
         suggestedPath,
       };
     }
 
-    // 檢查是否包含路徑遍歷攻擊
-    if (filePath.includes('..') || filePath.includes('~/')) {
+    // 4. 檢查是否包含路徑遍歷攻擊
+    if (filePath.includes('..') || filePath.includes('~/') || filePath.includes('/../')) {
       return {
         isValid: false,
-        reason: `檔案路徑包含危險字符: ${filePath}`,
+        reason: `檔案路徑包含危險字符（路徑遍歷攻擊）: ${filePath}`,
         suggestedPath: this.sanitizeFilePath(filePath),
       };
     }
 
-    // 檢查是否嘗試訪問敏感檔案（即使在工作區內也不允許）
+    // 5. 檢查是否嘗試訪問敏感檔案（即使在工作區內也不允許）
     const sensitivePatterns = [
       '/etc/',
       '/root/',
@@ -93,18 +99,37 @@ export class DockerSecurityValidator {
       '/var/log/',
       '/proc/',
       '/sys/',
+      '/usr/',
+      '/bin/',
+      '/sbin/',
       '/.env',
       '/node_modules/',
+      '/.git/',
+      '/.next/',
+      '/build/',
+      '/dist/',
     ];
 
     for (const pattern of sensitivePatterns) {
       if (normalizedPath.includes(pattern)) {
         return {
           isValid: false,
-          reason: `嘗試訪問受限檔案: ${normalizedPath}`,
+          reason: `嘗試訪問受限檔案或系統目錄: ${normalizedPath}`,
         };
       }
     }
+
+    // 6. 禁止任何絕對路徑，除非明確在容器工作區內
+    if (normalizedPath.startsWith('/') && !normalizedPath.startsWith('/app/workspace/')) {
+      return {
+        isValid: false,
+        reason: `禁止訪問容器工作區外的絕對路徑: ${normalizedPath}。僅允許 /app/workspace/ 內的路徑`,
+        suggestedPath: this.relocateToProjectWorkspace(filePath, projectName || 'project'),
+      };
+    }
+
+    // 7. 記錄安全驗證通過的操作
+    logger.info(`[SecurityValidator] 路徑驗證通過: ${normalizedPath} (容器: ${dockerContext.containerId})`);
 
     return { isValid: true };
   }
@@ -123,14 +148,29 @@ export class DockerSecurityValidator {
   private isProjectWorkspacePath(path: string, projectName?: string): boolean {
     const normalizedPath = path.replace(/\/+/g, '/').replace(/\/$/, '');
     
-    if (projectName) {
-      // 如果指定了專案名稱，必須在 /app/workspace/[projectName]/ 內
-      const projectPath = `/app/workspace/${projectName}`;
-      return normalizedPath === projectPath || normalizedPath.startsWith(`${projectPath}/`);
-    } else {
-      // 如果沒有指定專案名稱，檢查是否在 /app/workspace/ 下的任何專案
-      return normalizedPath.startsWith('/app/workspace/') && this.projectWorkspacePattern.test(normalizedPath);
+    // 對於當前目錄或相對路徑，在 Docker 環境內都應該允許
+    if (normalizedPath === '' || normalizedPath === '.' || normalizedPath.startsWith('./')) {
+      return true;
     }
+    
+    // 檢查是否在工作目錄範圍內
+    if (normalizedPath.includes('/app/workspace/')) {
+      if (projectName) {
+        // 如果指定了專案名稱，必須在 /app/workspace/[projectName]/ 內
+        const projectPath = `/app/workspace/${projectName}`;
+        return normalizedPath === projectPath || normalizedPath.startsWith(`${projectPath}/`);
+      } else {
+        // 如果沒有指定專案名稱，檢查是否在 /app/workspace/ 下的任何專案
+        return this.projectWorkspacePattern.test(normalizedPath);
+      }
+    }
+    
+    // 對於其他相對路徑，如果不包含危險的路徑遍歷，也允許
+    if (!normalizedPath.startsWith('/') && !normalizedPath.includes('..')) {
+      return true;
+    }
+    
+    return false;
   }
 
   /**
@@ -139,16 +179,16 @@ export class DockerSecurityValidator {
   private normalizePath(filePath: string, workingDirectory: string): string {
     let normalizedPath: string;
     
+    // 簡化處理：對於 Docker 環境內部操作，優先處理相對路徑
+    if (filePath === '.' || filePath === './' || !filePath) {
+      return workingDirectory.replace(/\/$/, '');
+    }
+    
     if (filePath.startsWith('/')) {
       // 絕對路徑，直接處理
       normalizedPath = filePath;
     } else {
-      // 相對路徑處理
-      if (filePath === '.' || filePath === './') {
-        return workingDirectory.replace(/\/$/, '');
-      }
-      
-      // 移除開頭的 ./
+      // 相對路徑處理 - 移除開頭的 ./
       const cleanPath = filePath.replace(/^\.\//, '');
       
       // 相對路徑，基於工作目錄解析
@@ -162,7 +202,7 @@ export class DockerSecurityValidator {
       .replace(/\/\.$/, '') // 移除結尾的 /.
       .replace(/\/$/, ''); // 移除結尾的斜線
     
-    return normalizedPath || '/';
+    return normalizedPath || workingDirectory;
   }
 
   /**

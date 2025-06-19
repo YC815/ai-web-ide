@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 // @deprecated LangchainChatEngine 和 AIContextManager 已棄用，請使用新的 aiChatSession 和 aiContextManager
-import { createLangchainChatEngine, LangchainChatResponse, LangchainChatEngine, showMigrationWarning } from '../../../lib/ai/langchain-chat-engine';
+import { createLangChainChatEngine, showMigrationWarning } from '../../../lib/ai/langchain-chat-engine';
 import { ProjectContext, showMigrationWarning as showContextMigrationWarning } from '../../../lib/ai/context-manager';
 
 // 定義嚴格的類型
@@ -58,7 +58,7 @@ export interface LangchainChatApiResponse {
 }
 
 // 全局 Langchain 引擎實例管理 - 改進的持久化會話管理
-const chatEngines = new Map<string, LangchainChatEngine>();
+const chatEngines = new Map<string, ReturnType<typeof createLangChainChatEngine>>();
 
 // 會話持久化存儲 (模擬持久化，實際部署時可以替換為 Redis 或資料庫)
 interface PersistentSession {
@@ -179,11 +179,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<Langchain
 
     if (!chatEngine) {
       console.log(`🚀 創建新的 Langchain 聊天引擎: ${engineKey}`);
-      chatEngine = createLangchainChatEngine(apiToken, {
-        model,
-        temperature,
-        maxTokens: 100000
-      });
+      chatEngine = await createLangChainChatEngine([], normalizedProjectName);
       chatEngines.set(engineKey, chatEngine);
     }
 
@@ -206,11 +202,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<Langchain
     console.log(`🗂️ 專案上下文:`, projectContext);
 
     // 使用 Langchain 引擎處理訊息
-    const response: LangchainChatResponse = await chatEngine.processMessage(
-      currentSessionId,
-      message,
-      projectContext
-    );
+    const response = await chatEngine.run(message);
 
     // 獲取會話統計
     const sessionStats = chatEngine.getSessionStats ? chatEngine.getSessionStats() : {
@@ -248,13 +240,13 @@ export async function POST(request: NextRequest): Promise<NextResponse<Langchain
     return NextResponse.json({
       success: true,
       data: {
-        message: response.message,
+        message: response,
         sessionId: currentSessionId,
-        toolCalls: response.toolCalls || [],
-        thoughtProcess: response.thoughtProcess,
-        contextUpdate: response.contextUpdate,
-        autoActions: response.autoActions,
-        needsUserInput: response.needsUserInput,
+        toolCalls: [],
+        thoughtProcess: undefined,
+        contextUpdate: undefined,
+        autoActions: undefined,
+        needsUserInput: false,
         sessionStats
       }
     });
