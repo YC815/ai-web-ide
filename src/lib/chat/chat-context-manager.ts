@@ -179,11 +179,16 @@ export class ChatContextManager {
    * 添加用戶訊息
    */
   async addUserMessage(roomId: string, content: string): Promise<ChatMessage> {
+    // 確保 content 不為 null 或空字串
+    if (!content || content.trim() === '') {
+      throw new Error('用戶訊息內容不能為空');
+    }
+
     const message: ChatMessage = {
       id: this.generateId('msg'),
       roomId,
       role: 'user',
-      content,
+      content: content.trim(),
       timestamp: new Date().toISOString(),
     };
 
@@ -198,11 +203,22 @@ export class ChatContextManager {
     roomId: string,
     response: ChatResponse
   ): Promise<ChatMessage> {
+    // 確保 response.message 不為 null 或空字串
+    let content = response.message;
+    if (!content || content.trim() === '' || content === 'null' || content === 'undefined') {
+      content = '抱歉，我遇到了技術問題，無法產生適當的回應。';
+      console.warn('⚠️ AI 回應內容為空或無效，使用預設回應', { 
+        originalMessage: response.message,
+        roomId,
+        messageId: response.messageId 
+      });
+    }
+
     const message: ChatMessage = {
       id: response.messageId,
       roomId,
       role: 'assistant',
-      content: response.message,
+      content,
       timestamp: new Date().toISOString(),
       tokens: response.tokens,
       cost: response.cost,

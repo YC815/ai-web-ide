@@ -9,36 +9,78 @@ import {
   toolsByCategory, 
   generateOpenAISchemas 
 } from '../functions/index.js';
-import type { FunctionDefinition } from '../functions/types.js';
+import type { FunctionDefinition, ExecutionContext } from '../functions/types.js';
 
 /**
  * 將統一工具轉換為 Langchain DynamicTool
  */
-export function convertToLangchainTool(functionDef: FunctionDefinition): DynamicTool {
+export function convertToLangchainTool(functionDef: FunctionDefinition, context: ExecutionContext): DynamicTool {
   return new DynamicTool({
-    name: functionDef.name,
-    description: functionDef.description,
+    name: functionDef.schema.name,
+    description: functionDef.schema.description,
     func: async (input: string) => {
       try {
+        console.log(`[LangChain綁定器] 工具調用: ${functionDef.schema.name}`, { input });
+        
         // 解析輸入參數
         let parameters: Record<string, any>;
         try {
+          // 嘗試解析為 JSON
           parameters = JSON.parse(input);
+          console.log(`[LangChain綁定器] JSON 參數解析成功:`, parameters);
+
+          // 強制修正：如果工具是 docker_list_directory 且參數為 input，則轉換為 dirPath
+          if (functionDef.schema.name === 'docker_list_directory' && parameters.input !== undefined) {
+            console.log(`[LangChain綁定器] 執行 docker_list_directory 參數強制修正：'input' -> 'dirPath'`);
+            parameters.dirPath = parameters.input;
+            delete parameters.input;
+          }
+
         } catch {
-          // 如果不是 JSON，嘗試簡單參數解析
-          parameters = { input };
+          // 如果不是 JSON，根據工具類型進行智能參數解析
+          console.log(`[LangChain綁定器] JSON 解析失敗，嘗試智能解析:`, { input, toolName: functionDef.schema.name });
+          
+          if (functionDef.schema.name === 'docker_list_directory') {
+            // 專門處理 docker_list_directory 工具
+            parameters = { input: input, dirPath: input };
+          } else if (functionDef.schema.name.includes('file') && functionDef.schema.name.includes('read')) {
+            // 處理讀取檔案工具
+            parameters = { filePath: input };
+          } else if (functionDef.schema.name.includes('directory') || functionDef.schema.name.includes('list')) {
+            // 處理目錄列表工具
+            parameters = { dirPath: input, directoryPath: input };
+          } else {
+            // 通用處理：提供多種可能的參數名稱
+            parameters = { 
+              input: input,
+              path: input,
+              filePath: input,
+              dirPath: input,
+              directoryPath: input
+            };
+          }
+          console.log(`[LangChain綁定器] 智能解析結果:`, parameters);
         }
 
         // 驗證參數（如果有驗證器）
         if (functionDef.validator) {
           const validation = await functionDef.validator(parameters);
           if (!validation.isValid) {
-            return `❌ 參數驗證失敗: ${validation.reason}`;
+            const error = `❌ 參數驗證失敗: ${validation.reason}`;
+            console.error(`[LangChain綁定器] ${error}`, { parameters });
+            return error;
           }
         }
 
-        // 執行工具
-        const result = await functionDef.handler(parameters);
+        // 執行工具，並傳入上下文
+        console.log(`[LangChain綁定器] 執行工具: ${functionDef.schema.name}`, { parameters, context });
+        const result = await functionDef.handler(parameters, context);
+        
+        console.log(`[LangChain綁定器] 工具執行完成: ${functionDef.schema.name}`, { 
+          success: true,
+          resultType: typeof result,
+          resultLength: Array.isArray(result) ? result.length : undefined
+        });
         
         // 格式化結果
         if (typeof result === 'object') {
@@ -47,7 +89,25 @@ export function convertToLangchainTool(functionDef: FunctionDefinition): Dynamic
         return String(result);
 
       } catch (error) {
-        return `❌ 工具執行失敗: ${error instanceof Error ? error.message : String(error)}`;
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        
+        // 特殊處理斷路器異常 - 重新拋出而不是返回錯誤字符串
+        if (errorMessage.includes('CIRCUIT BREAKER') || errorMessage.includes('🛑')) {
+          console.error(`[LangChain綁定器] 斷路器異常: ${errorMessage}`, { 
+            toolName: functionDef.schema.name, 
+            input, 
+            error 
+          });
+          throw error; // 重新拋出異常而不是返回字符串
+        }
+        
+        const errorMsg = `❌ 工具執行失敗: ${errorMessage}`;
+        console.error(`[LangChain綁定器] ${errorMsg}`, { 
+          toolName: functionDef.schema.name, 
+          input, 
+          error 
+        });
+        return errorMsg;
       }
     }
   });
@@ -56,22 +116,22 @@ export function convertToLangchainTool(functionDef: FunctionDefinition): Dynamic
 /**
  * 批量轉換所有工具
  */
-export function convertAllToolsToLangchain(): DynamicTool[] {
-  return allTools.map(convertToLangchainTool);
+export function convertAllToolsToLangchain(context: ExecutionContext): DynamicTool[] {
+  return allTools.map(tool => convertToLangchainTool(tool, context));
 }
 
 /**
  * 按分類轉換工具
  */
-export function convertToolsByCategoryToLangchain(category: string): DynamicTool[] {
+export function convertToolsByCategoryToLangchain(category: string, context: ExecutionContext): DynamicTool[] {
   const categoryTools = toolsByCategory[category] || [];
-  return categoryTools.map(convertToLangchainTool);
+  return categoryTools.map(tool => convertToLangchainTool(tool, context));
 }
 
 /**
  * 創建高優先級工具集合（用於 AI Agent）
  */
-export function createHighPriorityToolsForAgent(): DynamicTool[] {
+export function createHighPriorityToolsForAgent(context: ExecutionContext): DynamicTool[] {
   // 選擇最重要的工具
   const highPriorityCategories = ['ai', 'docker', 'project', 'filesystem'];
   const highPriorityTools: FunctionDefinition[] = [];
@@ -81,7 +141,7 @@ export function createHighPriorityToolsForAgent(): DynamicTool[] {
     highPriorityTools.push(...categoryTools);
   }
 
-  return highPriorityTools.map(convertToLangchainTool);
+  return highPriorityTools.map(tool => convertToLangchainTool(tool, context));
 }
 
 /**
@@ -102,7 +162,7 @@ export function generateOpenAIToolDefinitions() {
  * 智能工具選擇器
  * 根據用戶請求自動選擇相關工具
  */
-export function selectToolsForRequest(userMessage: string): DynamicTool[] {
+export function selectToolsForRequest(userMessage: string, context: ExecutionContext): DynamicTool[] {
   const message = userMessage.toLowerCase();
   const selectedTools: FunctionDefinition[] = [];
 
@@ -155,15 +215,17 @@ export function selectToolsForRequest(userMessage: string): DynamicTool[] {
 
   // 如果沒有匹配到特定工具，返回核心工具集
   if (selectedTools.length === 0) {
-    selectedTools.push(...createHighPriorityToolsForAgent().map(tool => {
-      // 從 DynamicTool 轉回 FunctionDefinition 的簡化版本
-      return allTools.find(t => t.name === tool.name)!;
-    }).filter(Boolean));
+    // This part is tricky because createHighPriorityToolsForAgent now needs context.
+    // Assuming context is available here.
+    const highPriorityDynamicTools = createHighPriorityToolsForAgent(context);
+    const highPriorityToolNames = highPriorityDynamicTools.map(t => t.name);
+    const highPriorityDefs = allTools.filter(t => highPriorityToolNames.includes(t.schema.name));
+    selectedTools.push(...highPriorityDefs);
   }
 
   // 去重並轉換
   const uniqueTools = Array.from(new Set(selectedTools));
-  return uniqueTools.map(convertToLangchainTool);
+  return uniqueTools.map(tool => convertToLangchainTool(tool, context));
 }
 
 export default {

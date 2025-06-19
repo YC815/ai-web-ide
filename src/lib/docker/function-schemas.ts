@@ -245,6 +245,75 @@ export const DOCKER_AI_FUNCTION_SCHEMAS: DockerFunctionSchema[] = [
       },
       required: ['prompt']
     }
+  },
+  {
+    name: 'docker_ls',
+    description: '列出Docker容器內目錄內容（標準Unix ls命令格式）',
+    parameters: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description: '目錄路徑，相對於容器內的 /app 目錄，預設為當前目錄'
+        },
+        long: {
+          type: 'boolean',
+          description: '-l, 使用長格式顯示詳細資訊'
+        },
+        all: {
+          type: 'boolean',
+          description: '-a, 顯示隱藏檔案（以.開頭的檔案）'
+        },
+        recursive: {
+          type: 'boolean',
+          description: '-R, 遞迴列出子目錄內容'
+        },
+        human: {
+          type: 'boolean',
+          description: '-h, 以人類可讀格式顯示檔案大小'
+        }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'docker_tree',
+    description: '顯示Docker容器內目錄樹狀結構（標準Unix tree命令格式）',
+    parameters: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description: '目錄路徑，相對於容器內的 /app 目錄，預設為當前目錄'
+        },
+        depth: {
+          type: 'number',
+          description: '-L, 限制顯示深度層級'
+        },
+        all: {
+          type: 'boolean',
+          description: '-a, 顯示隱藏檔案和目錄'
+        },
+        dirOnly: {
+          type: 'boolean',
+          description: '-d, 只顯示目錄'
+        },
+        fileSize: {
+          type: 'boolean',
+          description: '-s, 顯示檔案大小'
+        }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'docker_pwd',
+    description: '顯示Docker容器內當前工作目錄（標準Unix pwd命令格式）',
+    parameters: {
+      type: 'object',
+      properties: {},
+      required: []
+    }
   }
 ];
 
@@ -265,7 +334,10 @@ export type DockerAIToolName =
   | 'docker_show_directory_tree'
   | 'docker_smart_monitor_and_recover'
   | 'docker_get_full_status_report'
-  | 'ask_user';
+  | 'ask_user'
+  | 'docker_ls'
+  | 'docker_tree'
+  | 'docker_pwd';
 
 // 🎯 Docker工具參數類型定義
 export interface DockerAIToolParameters {
@@ -285,6 +357,9 @@ export interface DockerAIToolParameters {
   docker_smart_monitor_and_recover: Record<string, never>;
   docker_get_full_status_report: Record<string, never>;
   ask_user: { prompt: string; options?: string[] };
+  docker_ls: { path?: string; long?: boolean; all?: boolean; recursive?: boolean; human?: boolean };
+  docker_tree: { path?: string; depth?: number; all?: boolean; dirOnly?: boolean; fileSize?: boolean };
+  docker_pwd: Record<string, never>;
 }
 
 // 🎯 Docker工具回應類型定義
@@ -315,6 +390,9 @@ export interface DockerAIToolResponses {
     recentLogs: string[];
   };
   ask_user: string;
+  docker_ls: string[];
+  docker_tree: string[];
+  docker_pwd: string;
 }
 
 // 🎯 Docker工具調用介面
@@ -367,7 +445,8 @@ export const DOCKER_FUNCTION_SUMMARY = {
     healthCheck: ['docker_check_health', 'docker_check_container_health'],
     fileSystem: ['docker_read_file', 'docker_write_file', 'docker_list_directory', 'docker_show_directory_tree'],
     smart: ['docker_smart_monitor_and_recover', 'docker_get_full_status_report'],
-    interaction: ['ask_user']
+    interaction: ['ask_user'],
+    system: ['docker_ls', 'docker_tree', 'docker_pwd']
   },
   description: `
 🐳 Docker AI 工具集 - 完全在容器內操作，不影響宿主機

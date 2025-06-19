@@ -9,21 +9,21 @@ async function testBasicImports() {
 
   try {
     // 測試類型導入
-    const types = await import('../src/lib/functions/types');
+    const types = await import('../src/lib/functions/types.js');
     console.log('✅ types 模組導入成功');
     console.log(`  - ToolCategory: ${Object.keys(types.ToolCategory).length} 個分類`);
     console.log(`  - FunctionAccessLevel: ${Object.keys(types.FunctionAccessLevel).length} 個權限等級`);
 
     // 測試分類導入
-    const categories = await import('../src/lib/functions/categories');
+    const categories = await import('../src/lib/functions/categories.js');
     console.log('✅ categories 模組導入成功');
     
     // 測試工具註冊表
-    const registry = await import('../src/lib/functions/registry');
+    const registry = await import('../src/lib/functions/registry.js');
     console.log('✅ registry 模組導入成功');
     
     // 測試執行器
-    const executor = await import('../src/lib/functions/executor');
+    const executor = await import('../src/lib/functions/executor.js');
     console.log('✅ executor 模組導入成功');
     
     return true;

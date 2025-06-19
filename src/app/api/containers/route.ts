@@ -165,7 +165,12 @@ const getAIWebIDEContainers = async () => {
 };
 
 // 創建新的專案容器
-const createProjectContainer = async (projectName: string, description: string, onLog?: (log: string) => void) => {
+const createProjectContainer = async (
+  projectName: string, 
+  description: string, 
+  installTree: boolean, // 新增參數
+  onLog?: (log: string) => void
+) => {
   // 生成容器名稱
   const timestamp = Date.now();
   const containerName = `ai-web-ide-${projectName.toLowerCase().replace(/[^a-z0-9]/g, '-')}-${timestamp}`;
@@ -211,13 +216,15 @@ const createProjectContainer = async (projectName: string, description: string, 
       'apk add --no-cache curl bash git'
     ], onLog);
     
-    // 安裝常用命令行工具
-    if (onLog) onLog(`📋 安裝常用工具 (tree, wget, nano, vim)...`);
-    await execCommandWithLogs('docker', [
-      'exec', containerName,
-      'sh', '-c', 
-      'apk add --no-cache tree wget nano vim htop'
-    ], onLog);
+    // 根據參數決定是否安裝 tree 等常用工具
+    if (installTree) {
+      if (onLog) onLog(`📋 安裝常用工具 (tree, wget, nano, vim)...`);
+      await execCommandWithLogs('docker', [
+        'exec', containerName,
+        'sh', '-c', 
+        'apk add --no-cache tree wget nano vim htop'
+      ], onLog);
+    }
     
     if (onLog) onLog(`✅ 系統工具安裝完成`);
     
@@ -227,44 +234,40 @@ const createProjectContainer = async (projectName: string, description: string, 
   }
   
   // 自動初始化 Next.js 專案
-  try {
-    if (onLog) onLog(`🚀 開始初始化 Next.js 專案...`);
-    
-    // 在容器內執行 npx create-next-app
-    await execCommandWithLogs('docker', [
-      'exec', containerName,
-      'sh', '-c', 
-      `cd /app/workspace && npx create-next-app@latest ${projectName} --typescript --tailwind --eslint --app --src-dir --import-alias "@/*" --yes`
-    ], onLog);
-    
-    if (onLog) onLog(`✅ Next.js 專案初始化完成`);
-    
-    // 設置工作目錄權限
-    if (onLog) onLog(`🔐 設置專案權限...`);
-    await execCommand('docker', [
-      'exec', containerName,
-      'sh', '-c',
-      `cd /app/workspace/${projectName} && chown -R node:node . && chmod -R 755 .`
-    ]);
-    
-    if (onLog) onLog(`✅ 專案權限設置完成`);
-    
-    // 安裝額外的開發依賴
-    if (onLog) onLog(`📦 安裝額外開發依賴...`);
-    await execCommandWithLogs('docker', [
-      'exec', containerName,
-      'sh', '-c',
-      `cd /app/workspace/${projectName} && npm install --save-dev @types/node`
-    ], onLog);
-    
-    if (onLog) onLog(`✅ 額外依賴安裝完成`);
-    
-  } catch (initError) {
-    if (onLog) onLog(`❌ Next.js 專案初始化失敗: ${initError instanceof Error ? initError.message : 'Unknown error'}`);
-    console.error('Next.js 專案初始化失敗:', initError);
-    // 即使初始化失敗，容器仍然可用，只是沒有 Next.js 專案
-    if (onLog) onLog(`ℹ️ 容器創建成功，但 Next.js 初始化失敗，用戶可以手動初始化`);
-  }
+  if (onLog) onLog(`🚀 開始初始化 Next.js 專案...`);
+  
+  // 在容器內執行 npx create-next-app
+  await execCommandWithLogs('docker', [
+    'exec', 
+    '-w', '/app/workspace', // 設置工作目錄
+    containerName,
+    'npx', 'create-next-app@latest', projectName, 
+    '--typescript', '--tailwind', '--eslint', 
+    '--app', '--src-dir', '--import-alias', '"@/*"', '--yes'
+  ], onLog, 600000); // 增加超時至 10 分鐘
+  
+  if (onLog) onLog(`✅ Next.js 專案初始化完成`);
+  
+  // 設置工作目錄權限
+  if (onLog) onLog(`🔐 設置專案權限...`);
+  await execCommand('docker', [
+    'exec', containerName,
+    'chown', '-R', 'node:node', `/app/workspace/${projectName}`
+  ]);
+  
+  if (onLog) onLog(`✅ 專案權限設置完成`);
+  
+  const projectPath = `/app/workspace/${projectName}`;
+  
+  // 安裝額外的開發依賴
+  if (onLog) onLog(`📦 安裝額外開發依賴...`);
+  await execCommandWithLogs('docker', [
+    'exec', containerName,
+    'sh', '-c',
+    `cd ${projectPath} && npm install --save-dev @types/node`
+  ], onLog);
+  
+  if (onLog) onLog(`✅ 額外依賴安裝完成`);
   
   if (onLog) onLog(`🎉 專案容器創建完成！`);
   
@@ -378,9 +381,9 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { action, projectName, description, containerId } = body;
+    const { action, projectName, description, containerId, installTree } = body;
 
-    console.log('Container API request:', { action, projectName, description, containerId });
+    console.log('Container API request:', { action, projectName, description, containerId, installTree });
 
     switch (action) {
       case 'create':
@@ -392,48 +395,50 @@ export async function POST(request: NextRequest) {
         }
 
         try {
-          // 檢查是否請求實時日誌
-          const wantsLogs = request.headers.get('accept') === 'text/stream';
-          
-          if (wantsLogs) {
-            // 返回 Server-Sent Events 流
-            const encoder = new TextEncoder();
-            const stream = new ReadableStream({
-              start(controller) {
-                const onLog = (log: string) => {
-                  const data = `data: ${JSON.stringify({ type: 'log', message: log })}\n\n`;
-                  controller.enqueue(encoder.encode(data));
-                };
-                
-                createProjectContainer(projectName, description || '', onLog)
-                  .then((newContainer) => {
-                    const data = `data: ${JSON.stringify({ type: 'complete', container: newContainer })}\n\n`;
-                    controller.enqueue(encoder.encode(data));
-                    controller.close();
-                  })
-                  .catch((error) => {
-                    const data = `data: ${JSON.stringify({ type: 'error', error: error.message })}\n\n`;
-                    controller.enqueue(encoder.encode(data));
-                    controller.close();
-                  });
+          // 使用流式回應
+          const stream = new ReadableStream({
+            async start(controller) {
+              const onLog = (log: string) => {
+                // 檢查 controller 是否仍然開啟
+                try {
+                  controller.enqueue(`data: ${JSON.stringify({ type: 'log', message: log })}\n\n`);
+                } catch (e) {
+                  if (e instanceof TypeError && e.message.includes("closed")) {
+                    console.warn("Stream controller was already closed. Cannot enqueue new log.");
+                  } else {
+                    throw e;
+                  }
+                }
+              };
+
+              try {
+                const newContainer = await createProjectContainer(projectName, description || '', installTree, onLog);
+                controller.enqueue(`data: ${JSON.stringify({ type: 'complete', container: newContainer })}\n\n`);
+              } catch (error) {
+                const errorMessage = error instanceof Error ? error.message : '未知錯誤';
+                onLog(`❌ 創建失敗: ${errorMessage}`);
+                controller.enqueue(`data: ${JSON.stringify({ type: 'error', error: errorMessage })}\n\n`);
+              } finally {
+                // 確保最後關閉 controller
+                try {
+                  controller.close();
+                } catch (e) {
+                  // 如果已經關閉則忽略錯誤
+                  if (!(e instanceof TypeError && e.message.includes("closed"))) {
+                    console.error("Error closing stream controller:", e);
+                  }
+                }
               }
-            });
-            
-            return new Response(stream, {
-              headers: {
-                'Content-Type': 'text/event-stream',
-                'Cache-Control': 'no-cache',
-                'Connection': 'keep-alive',
-              },
-            });
-          } else {
-            // 傳統的一次性回應
-            const newContainer = await createProjectContainer(projectName, description || '');
-            return NextResponse.json({
-              success: true,
-              data: newContainer
-            });
-          }
+            }
+          });
+          
+          return new NextResponse(stream, {
+            headers: {
+              'Content-Type': 'text/event-stream',
+              'Cache-Control': 'no-cache',
+              'Connection': 'keep-alive',
+            },
+          });
         } catch (error) {
           console.error('創建容器失敗:', error);
           return NextResponse.json({

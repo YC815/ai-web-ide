@@ -90,8 +90,8 @@ export class DockerDevServerTool {
           return;
         }
         await new Promise(resolve => setTimeout(resolve, 1000)); // 等待1秒
-      } catch (error) {
-        // 繼續等待
+      } catch {
+        // 繼續等待，忽略錯誤
       }
     }
   }
@@ -166,7 +166,8 @@ export class DockerDevServerTool {
       }
       
       return undefined;
-    } catch (error) {
+    } catch {
+      // 發生錯誤時返回 undefined
       return undefined;
     }
   }
@@ -283,7 +284,14 @@ export class DockerDevServerTool {
         'bash', '-c', 'pgrep -f "npm run dev" || pgrep -f "next dev" || echo "not running"'
       ]);
 
-      const isRunning = result.success && result.containerOutput && !result.containerOutput.includes('not running');
+      // 修復類型問題：確保 isRunning 總是 boolean
+      const isRunning = Boolean(
+        result.success && 
+        result.containerOutput && 
+        result.containerOutput.trim() !== '' && 
+        !result.containerOutput.includes('not running')
+      );
+      
       const pid = isRunning ? result.containerOutput?.trim() : undefined;
       
       // 如果服務在運行，嘗試檢測URL
@@ -329,124 +337,33 @@ export class DockerDevServerTool {
    */
   private async executeInContainer(command: string[]): Promise<DockerToolResponse> {
     try {
-      // 1. 嚴格驗證 Docker 上下文
-      if (!this.dockerContext.containerId) {
-        return {
-          success: false,
-          error: '無效的 Docker 容器 ID'
-        };
-      }
+      // 構建正確的 API URL
+      const apiUrl = typeof window !== 'undefined' 
+        ? '/api/docker'  // 客戶端環境
+        : `${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/api/docker`;  // 服務器端環境
 
-      // 2. 確保命令不包含危險操作 - 修復過於嚴格的檢測
-      const commandStr = command.join(' ');
-      const dangerousPatterns = [
-        'rm -rf /',
-        'chmod 777',
-        'sudo',
-        'su -',
-        'mount',
-        'umount',
-        'docker',
-        '/etc/passwd',
-        '/etc/shadow',
-        'curl.*download',
-        'wget.*download',
-        // 移除對基本管道操作的限制，只限制危險的rm操作
-        'rm.*-rf.*\\|',
-        ';.*rm.*-rf',
-        '&&.*rm.*-rf'
-      ];
-
-      for (const pattern of dangerousPatterns) {
-        if (new RegExp(pattern, 'i').test(commandStr)) {
-          return {
-            success: false,
-            error: `命令包含危險操作模式: ${pattern}`
-          };
-        }
-      }
-
-      // 3. 記錄容器操作
-      console.log(`🐳 在 Docker 容器 ${this.dockerContext.containerId} 內執行命令:`, command);
-
-      // 4. 構建 Docker exec 命令
-      const dockerExecCommand = [
-        'docker', 'exec',
-        '--workdir', this.dockerContext.workingDirectory || '/app',
-        this.dockerContext.containerId,
-        ...command
-      ];
-
-      // 5. 執行命令
-      const startTime = Date.now();
-      const { spawn } = await import('child_process');
-      
-      return new Promise((resolve) => {
-        let stdout = '';
-        let stderr = '';
-        
-        const process = spawn(dockerExecCommand[0], dockerExecCommand.slice(1), {
-          stdio: ['pipe', 'pipe', 'pipe'],
-          timeout: 30000, // 30秒超時
-        });
-
-        process.stdout?.on('data', (data) => {
-          stdout += data.toString();
-        });
-
-        process.stderr?.on('data', (data) => {
-          stderr += data.toString();
-        });
-
-        process.on('close', (code) => {
-          const duration = Date.now() - startTime;
-          const success = code === 0;
-          
-          console.log(`🐳 Docker 容器命令執行完成 (${duration}ms):`, {
-            containerId: this.dockerContext.containerId,
-            command: command.join(' '),
-            success,
-            code
-          });
-
-          if (success) {
-            resolve({
-              success: true,
-              containerOutput: stdout,
-              message: `命令在 Docker 容器內執行成功 (${duration}ms)`
-            });
-          } else {
-            resolve({
-              success: false,
-              error: stderr || `命令執行失敗，退出碼: ${code}`,
-              containerOutput: stdout
-            });
-          }
-        });
-
-        process.on('error', (error) => {
-          console.error('🐳 Docker 容器命令執行錯誤:', error);
-          resolve({
-            success: false,
-            error: `Docker 命令執行錯誤: ${error.message}`
-          });
-        });
-
-        // 超時處理
-        setTimeout(() => {
-          if (!process.killed) {
-            process.kill();
-            resolve({
-              success: false,
-              error: '命令執行超時 (30秒)'
-            });
-          }
-        }, 30000);
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'exec',
+          containerId: this.dockerContext.containerId,
+          command,
+          workingDirectory: this.dockerContext.workingDirectory
+        })
       });
+
+      const result = await response.json();
+      
+      return {
+        success: result.success,
+        containerOutput: result.stdout || result.stderr,
+        error: result.success ? undefined : result.error || result.stderr
+      };
     } catch (error) {
       return {
         success: false,
-        error: `Docker 容器內命令執行失敗: ${error instanceof Error ? error.message : 'Unknown error'}`
+        error: `Docker執行失敗: ${error instanceof Error ? error.message : 'Unknown error'}`
       };
     }
   }
@@ -739,17 +656,15 @@ export class DockerHealthCheckTool {
 }
 
 // Docker 容器檔案系統工具
-// @deprecated DockerSecurityValidator 已棄用，請使用新的 securityValidator
-import { DockerSecurityValidator, showMigrationWarning } from '../ai/docker-security-validator';
 
 export class DockerFileSystemTool {
-  private securityValidator: DockerSecurityValidator;
+  // 移除未使用的 securityValidator，使用內建的路徑驗證
   
   constructor(
     private dockerContext: DockerContext, 
     private projectName?: string
   ) {
-    this.securityValidator = DockerSecurityValidator.getInstance();
+    // 使用內建的安全驗證邏輯
   }
 
   /**
@@ -757,18 +672,11 @@ export class DockerFileSystemTool {
    */
   async readFile(filePath: string): Promise<DockerToolResponse<string>> {
     try {
-      // 安全驗證
-      const validation = this.securityValidator.validateFilePath(
-        filePath, 
-        this.dockerContext, 
-        this.projectName
-      );
-      
-      if (!validation.isValid) {
+      // 簡化的安全驗證
+      if (!this.isValidFilePath(filePath)) {
         return {
           success: false,
-          error: `安全驗證失敗: ${validation.reason}`,
-          message: validation.suggestedPath ? `建議路徑: ${validation.suggestedPath}` : undefined
+          error: `不安全的檔案路徑: ${filePath}`
         };
       }
       
@@ -795,18 +703,11 @@ export class DockerFileSystemTool {
    */
   async writeFile(filePath: string, content: string): Promise<DockerToolResponse<string>> {
     try {
-      // 安全驗證
-      const validation = this.securityValidator.validateFilePath(
-        filePath, 
-        this.dockerContext, 
-        this.projectName
-      );
-      
-      if (!validation.isValid) {
+      // 簡化的安全驗證
+      if (!this.isValidFilePath(filePath)) {
         return {
           success: false,
-          error: `安全驗證失敗: ${validation.reason}`,
-          message: validation.suggestedPath ? `建議路徑: ${validation.suggestedPath}` : undefined
+          error: `不安全的檔案路徑: ${filePath}`
         };
       }
       
@@ -829,6 +730,24 @@ export class DockerFileSystemTool {
   }
 
   /**
+   * 簡化的檔案路徑安全驗證
+   */
+  private isValidFilePath(filePath: string): boolean {
+    // 檢查基本的安全問題
+    const dangerousPatterns = [
+      /\.\./,           // 路徑遍歷
+      /\/etc\//,        // 系統檔案
+      /\/proc\//,       // 系統檔案
+      /\/sys\//,        // 系統檔案
+      /\/dev\//,        // 設備檔案
+      /\/root\//,       // Root 目錄
+      /\/home\/(?!app)/ // 其他用戶目錄
+    ];
+
+    return !dangerousPatterns.some(pattern => pattern.test(filePath));
+  }
+
+  /**
    * 列出Docker容器內目錄內容（需安全驗證）
    */
   async listDirectory(dirPath: string = '.', options?: { 
@@ -839,23 +758,16 @@ export class DockerFileSystemTool {
     try {
       const { recursive = false, showHidden = false, useTree = false } = options || {};
       
-      // 安全驗證
-      const validation = this.securityValidator.validateDirectoryPath(
-        dirPath, 
-        this.dockerContext, 
-        this.projectName
-      );
-      
-      if (!validation.isValid) {
+      // 簡化的安全驗證
+      if (!this.isValidDirectoryPath(dirPath)) {
         return {
           success: false,
-          error: `安全驗證失敗: ${validation.reason}`,
-          message: validation.suggestedPath ? `建議路徑: ${validation.suggestedPath}` : undefined
+          error: `不安全的目錄路徑: ${dirPath}`
         };
       }
       
       // 路徑已經通過安全驗證，不需要再次處理
-      const safeDirPath = dirPath;
+      const safeDirPath = this.sanitizePath(dirPath);
       
       let command: string[];
       
@@ -875,34 +787,26 @@ export class DockerFileSystemTool {
           `)`
         ];
       } else {
-        // 使用ls命令，但限制遞迴深度
+        // 使用ls命令，使用簡單安全的格式
         if (recursive) {
-          // 限制遞迴深度並排除常見的大型目錄
-          const excludePatterns = [
-            'node_modules', 
-            '.git', 
-            '.next', 
-            'dist', 
-            'build',
-            'coverage',
-            '.vscode',
-            '.idea'
-          ].map(pattern => `! -path "*/${pattern}/*"`).join(' ');
-          
-          command = ['bash', '-c', 
-            `cd "${safeDirPath}" && find . -maxdepth 3 ${excludePatterns} -type f -o -type d | head -500 | sort`
-          ];
+          // 遞迴列出，使用 find 命令但避免複雜語法
+          command = ['find', safeDirPath, '-maxdepth', '3', '-name', 'node_modules', '-prune', '-o', '-print'];
         } else {
-          // 非遞迴列出
-          const lsArgs = ['-la'];
-          if (showHidden) lsArgs.push('-A'); // 顯示隱藏檔案但不顯示 . 和 ..
-          command = ['ls', ...lsArgs, safeDirPath];
+          // 非遞迴列出，使用更簡單的命令格式避免語法錯誤
+          if (showHidden) {
+            command = ['ls', '-la', safeDirPath];
+          } else {
+            command = ['ls', '-l', safeDirPath];
+          }
         }
       }
+
+      console.log(`🗂️ [listDirectory] 執行命令:`, command.join(' '), `參數: ${JSON.stringify({ dirPath, safeDirPath, options })}`);
 
       const result = await this.executeInContainer(command);
 
       if (!result.success) {
+        console.error(`❌ [listDirectory] 命令執行失敗:`, result.error);
         return {
           success: false,
           error: result.error || '列出目錄失敗'
@@ -910,7 +814,28 @@ export class DockerFileSystemTool {
       }
 
       const output = result.containerOutput || '';
-      const files = output.split('\n').filter(line => line.trim());
+      console.log(`📋 [listDirectory] 原始輸出:`, { 
+        outputLength: output.length, 
+        firstLine: output.split('\n')[0], 
+        lineCount: output.split('\n').length 
+      });
+
+      // 處理 ls -l 格式的輸出，只提取檔案/目錄名稱
+      let files: string[];
+      if (output.includes('total ') && !useTree) {
+        // ls -l 格式，需要解析
+        files = output.split('\n')
+          .filter(line => line.trim() && !line.startsWith('total '))
+          .map(line => {
+            // 提取檔案名稱（最後一個空格後的部分）
+            const parts = line.trim().split(/\s+/);
+            return parts[parts.length - 1];
+          })
+          .filter(name => name && name !== '.' && name !== '..');
+      } else {
+        // 一般格式
+        files = output.split('\n').filter(line => line.trim());
+      }
 
       // 如果輸出過多，截斷並提供建議
       if (files.length > 1000) {
@@ -918,6 +843,11 @@ export class DockerFileSystemTool {
         truncatedFiles.push('');
         truncatedFiles.push('⚠️  輸出已截斷（超過1000行）');
         truncatedFiles.push('💡 建議：使用更具體的路徑或 tree 命令限制深度');
+        
+        console.log(`⚠️ [listDirectory] 輸出截斷:`, { 
+          originalCount: files.length, 
+          truncatedCount: truncatedFiles.length 
+        });
         
         return {
           success: true,
@@ -927,6 +857,12 @@ export class DockerFileSystemTool {
         };
       }
 
+      console.log(`✅ [listDirectory] 成功列出目錄:`, { 
+        path: safeDirPath, 
+        fileCount: files.length,
+        files: files.slice(0, 5) // 只記錄前5個文件
+      });
+
       return {
         success: true,
         data: files,
@@ -934,11 +870,30 @@ export class DockerFileSystemTool {
         containerOutput: result.containerOutput
       };
     } catch (error) {
+      console.error(`❌ [listDirectory] 異常:`, error);
       return {
         success: false,
         error: `列出Docker容器內目錄失敗: ${error instanceof Error ? error.message : 'Unknown error'}`
       };
     }
+  }
+
+  /**
+   * 簡化的目錄路徑安全驗證
+   */
+  private isValidDirectoryPath(dirPath: string): boolean {
+    // 檢查基本的安全問題
+    const dangerousPatterns = [
+      /\.\./,           // 路徑遍歷
+      /\/etc$/,         // 系統目錄
+      /\/proc$/,        // 系統目錄
+      /\/sys$/,         // 系統目錄
+      /\/dev$/,         // 設備目錄
+      /\/root$/,        // Root 目錄
+      /\/home\/(?!app)/ // 其他用戶目錄
+    ];
+
+    return !dangerousPatterns.some(pattern => pattern.test(dirPath));
   }
 
   /**
@@ -968,52 +923,57 @@ export class DockerFileSystemTool {
    * 使用tree命令顯示Docker容器內目錄樹狀結構 - 修復版本
    */
   async showDirectoryTree(dirPath: string = '.', maxDepth?: number): Promise<DockerToolResponse<string>> {
-    try {
-      // 路徑已經通過安全驗證，不需要再次處理
-      const safeDirPath = dirPath;
-      
-      // 限制最大深度，防止輸出過大
-      const safeMaxDepth = maxDepth ? Math.min(maxDepth, 5) : 3;
-      const depthArg = `-L ${safeMaxDepth}`;
-      
-      const command = [
-        'bash', '-c', 
-        `cd "${safeDirPath}" && (` +
-        `tree ${depthArg} -F --dirsfirst || ` +
-        `(command -v apt-get >/dev/null 2>&1 && apt-get update && apt-get install -y tree && tree ${depthArg} -F --dirsfirst) || ` +
-        `(command -v apk >/dev/null 2>&1 && apk add --no-cache tree && tree ${depthArg} -F --dirsfirst) || ` +
-        `(command -v yum >/dev/null 2>&1 && yum install -y tree && tree ${depthArg} -F --dirsfirst) || ` +
-        `(echo "無法安裝 tree 命令，使用 find 替代:" && find . -maxdepth ${safeMaxDepth} -type d | head -100 | sort)` +
-        `)`
-      ];
-
-      const result = await this.executeInContainer(command);
-
-      // 檢查輸出大小並截斷如果需要
-      let output = result.containerOutput || '';
-      const lines = output.split('\n');
-      
-      if (lines.length > 500) {
-        const truncatedLines = lines.slice(0, 500);
-        truncatedLines.push('');
-        truncatedLines.push('⚠️  輸出已截斷（超過500行）');
-        truncatedLines.push(`💡 建議：使用更小的深度（當前: ${safeMaxDepth}）或更具體的路徑`);
-        output = truncatedLines.join('\n');
-      }
-
-      return {
-        success: result.success,
-        data: output,
-        message: result.success ? `成功顯示容器內目錄樹: ${safeDirPath} (深度: ${safeMaxDepth})` : '顯示目錄樹失敗',
-        error: result.error,
-        containerOutput: result.containerOutput
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: `顯示Docker容器內目錄樹失敗: ${error instanceof Error ? error.message : 'Unknown error'}`
-      };
+    const sanitizedPath = this.sanitizePath(dirPath);
+    if (!this.isValidDirectoryPath(sanitizedPath)) {
+      return { success: false, error: '不安全的目錄路徑' };
     }
+
+    const depth = maxDepth && maxDepth > 0 ? `-L ${maxDepth}` : '';
+    const command = `tree ${depth} -F --dirsfirst "${sanitizedPath}"`;
+
+    let result = await this.executeInContainer(['bash', '-c', command]);
+
+    // 如果第一次執行失敗，嘗試安裝 tree 並重試
+    if (!result.success && result.error?.includes('tree: not found')) {
+      console.log('tree 命令未找到，嘗試自動安裝...');
+      
+      // 嘗試安裝 tree
+      const installResult = await this.executeInContainer([
+        'bash', 
+        '-c', 
+        'apk add --no-cache tree || apt-get update && apt-get install -y tree || yum install -y tree'
+      ]);
+
+      if (installResult.success) {
+        console.log('tree 安裝成功，重試命令...');
+        // 再次執行 tree 命令
+        result = await this.executeInContainer(['bash', '-c', command]);
+      } else {
+        result.error += ` | 自動安裝 tree 失敗: ${installResult.error}`;
+      }
+    }
+    
+    // 如果 tree 還是失敗，使用 find 作為備用方案
+    if (!result.success) {
+      console.warn('tree 命令執行失敗，使用 find 作為備用方案...');
+      const findCommand = `find "${sanitizedPath}" ${maxDepth ? `-maxdepth ${maxDepth}` : ''} -type d | head -100 | sort`;
+      const findResult = await this.executeInContainer(['bash', '-c', findCommand]);
+      
+      if (findResult.success && findResult.containerOutput) {
+        return {
+          success: true,
+          data: `無法使用 tree 命令，使用 find 替代:\n${findResult.containerOutput}`,
+          message: '使用 find 替代 tree 成功'
+        };
+      }
+      result.error += ` | find 備用方案也失敗了: ${findResult.error}`;
+    }
+    
+    return {
+      success: result.success,
+      data: result.containerOutput,
+      error: result.error
+    };
   }
 
   /**
@@ -1021,124 +981,33 @@ export class DockerFileSystemTool {
    */
   private async executeInContainer(command: string[]): Promise<DockerToolResponse> {
     try {
-      // 1. 嚴格驗證 Docker 上下文
-      if (!this.dockerContext.containerId) {
-        return {
-          success: false,
-          error: '無效的 Docker 容器 ID'
-        };
-      }
+      // 構建正確的 API URL
+      const apiUrl = typeof window !== 'undefined' 
+        ? '/api/docker'  // 客戶端環境
+        : `${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/api/docker`;  // 服務器端環境
 
-      // 2. 確保命令不包含危險操作 - 修復過於嚴格的檢測
-      const commandStr = command.join(' ');
-      const dangerousPatterns = [
-        'rm -rf /',
-        'chmod 777',
-        'sudo',
-        'su -',
-        'mount',
-        'umount',
-        'docker',
-        '/etc/passwd',
-        '/etc/shadow',
-        'curl.*download',
-        'wget.*download',
-        // 移除對基本管道操作的限制，只限制危險的rm操作
-        'rm.*-rf.*\\|',
-        ';.*rm.*-rf',
-        '&&.*rm.*-rf'
-      ];
-
-      for (const pattern of dangerousPatterns) {
-        if (new RegExp(pattern, 'i').test(commandStr)) {
-          return {
-            success: false,
-            error: `命令包含危險操作模式: ${pattern}`
-          };
-        }
-      }
-
-      // 3. 記錄容器操作
-      console.log(`🐳 在 Docker 容器 ${this.dockerContext.containerId} 內執行命令:`, command);
-
-      // 4. 構建 Docker exec 命令
-      const dockerExecCommand = [
-        'docker', 'exec',
-        '--workdir', this.dockerContext.workingDirectory || '/app',
-        this.dockerContext.containerId,
-        ...command
-      ];
-
-      // 5. 執行命令
-      const startTime = Date.now();
-      const { spawn } = await import('child_process');
-      
-      return new Promise((resolve) => {
-        let stdout = '';
-        let stderr = '';
-        
-        const process = spawn(dockerExecCommand[0], dockerExecCommand.slice(1), {
-          stdio: ['pipe', 'pipe', 'pipe'],
-          timeout: 30000, // 30秒超時
-        });
-
-        process.stdout?.on('data', (data) => {
-          stdout += data.toString();
-        });
-
-        process.stderr?.on('data', (data) => {
-          stderr += data.toString();
-        });
-
-        process.on('close', (code) => {
-          const duration = Date.now() - startTime;
-          const success = code === 0;
-          
-          console.log(`🐳 Docker 容器命令執行完成 (${duration}ms):`, {
-            containerId: this.dockerContext.containerId,
-            command: command.join(' '),
-            success,
-            code
-          });
-
-          if (success) {
-            resolve({
-              success: true,
-              containerOutput: stdout,
-              message: `命令在 Docker 容器內執行成功 (${duration}ms)`
-            });
-          } else {
-            resolve({
-              success: false,
-              error: stderr || `命令執行失敗，退出碼: ${code}`,
-              containerOutput: stdout
-            });
-          }
-        });
-
-        process.on('error', (error) => {
-          console.error('🐳 Docker 容器命令執行錯誤:', error);
-          resolve({
-            success: false,
-            error: `Docker 命令執行錯誤: ${error.message}`
-          });
-        });
-
-        // 超時處理
-        setTimeout(() => {
-          if (!process.killed) {
-            process.kill();
-            resolve({
-              success: false,
-              error: '命令執行超時 (30秒)'
-            });
-          }
-        }, 30000);
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'exec',
+          containerId: this.dockerContext.containerId,
+          command,
+          workingDirectory: this.dockerContext.workingDirectory
+        })
       });
+
+      const result = await response.json();
+      
+      return {
+        success: result.success,
+        containerOutput: result.stdout || result.stderr,
+        error: result.success ? undefined : result.error || result.stderr
+      };
     } catch (error) {
       return {
         success: false,
-        error: `Docker 容器內命令執行失敗: ${error instanceof Error ? error.message : 'Unknown error'}`
+        error: `Docker執行失敗: ${error instanceof Error ? error.message : 'Unknown error'}`
       };
     }
   }

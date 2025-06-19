@@ -30,8 +30,6 @@ services:
       - CHOKIDAR_USEPOLLING=true  # 支援文件監控
     networks:
       - ai-ide-network
-    depends_on:
-      - backend
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
@@ -39,32 +37,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
-
-  # 後端服務 (Node.js + Express)
-  backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: ai-web-ide-backend  
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./backend:/app
-      - /app/node_modules
-      # 掛載 Docker socket 以控制容器
-      - /var/run/docker.sock:/var/run/docker.sock
-    environment:
-      - NODE_ENV=development
-      - PORT=8000
-      - DOCKER_HOST=unix:///var/run/docker.sock
-    networks:
-      - ai-ide-network
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
   # Redis 服務 (會話管理和快取)
   redis:
@@ -136,7 +108,6 @@ services:
       - ai-ide-network
     depends_on:
       - frontend
-      - backend
     restart: unless-stopped
     profiles:
       - production  # 只在生產環境啟用

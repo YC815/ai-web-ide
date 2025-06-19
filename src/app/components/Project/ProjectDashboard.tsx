@@ -332,7 +332,8 @@ export function ProjectDashboard() {
         body: JSON.stringify({
           action: 'create',
           projectName: data.name,
-          description: data.description
+          description: data.description,
+          installTree: true
         })
       });
       

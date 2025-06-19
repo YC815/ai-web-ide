@@ -40,6 +40,17 @@ export class DockerAIEditorManager {
   private pendingActions: Map<string, PendingAction> = new Map();
   private userConfirmationCallbacks: Map<string, (confirmed: boolean, data?: unknown) => void> = new Map();
   private logger: ToolLogger;
+  
+  // 添加斷路器機制 - 防止重複調用
+  private toolCallCache = new Map<string, { 
+    timestamp: number; 
+    count: number; 
+    result: unknown; 
+    lastCallTime: number 
+  }>();
+  private readonly CACHE_EXPIRY_MS = 30000; // 30秒緩存
+  private readonly MAX_SAME_CALL_COUNT = 2; // 最多允許相同調用2次
+  private readonly MIN_CALL_INTERVAL_MS = 10000; // 最小調用間隔 10秒 (特別是對於狀態檢查)
 
   constructor(config: DockerAIEditorConfig) {
     this.config = config;
@@ -64,6 +75,174 @@ export class DockerAIEditorManager {
   private logAction(action: string, metadata: Record<string, unknown> = {}): void {
     if (this.config.enableActionLogging) {
       this.logger.info(action, metadata);
+    }
+  }
+
+  /**
+   * 檢查工具調用斷路器
+   */
+  private checkToolCallCircuitBreaker(toolName: string, parameters: unknown): {
+    isBlocked: boolean;
+    cachedResult?: unknown;
+    reason?: string;
+    shouldWait?: boolean;
+    waitTime?: number;
+  } {
+    const cacheKey = `${toolName}:${JSON.stringify(parameters)}`;
+    const cached = this.toolCallCache.get(cacheKey);
+    const now = Date.now();
+    
+    if (cached) {
+      const isExpired = now - cached.timestamp > this.CACHE_EXPIRY_MS;
+      const timeSinceLastCall = now - cached.lastCallTime;
+      
+      if (!isExpired) {
+        // 特別處理狀態檢查工具 - 更嚴格的間隔控制
+        const minInterval = toolName === 'docker_check_dev_server_status' ? 
+          this.MIN_CALL_INTERVAL_MS : 5000;
+        
+        // 檢查是否調用過於頻繁
+        if (timeSinceLastCall < minInterval) {
+          console.warn(`⚠️  [${toolName}] 工具調用過於頻繁`, { 
+            parameters, 
+            timeSinceLastCall,
+            minInterval,
+            count: cached.count
+          });
+          
+          return { 
+            isBlocked: true, 
+            cachedResult: cached.result,
+            reason: `調用過於頻繁，請等待 ${Math.ceil((minInterval - timeSinceLastCall) / 1000)} 秒`,
+            shouldWait: true,
+            waitTime: minInterval - timeSinceLastCall
+          };
+        }
+        
+        // 檢查重複調用次數
+        if (cached.count >= this.MAX_SAME_CALL_COUNT) {
+          console.error(`🚨 [${toolName}] 工具調用次數過多，啟動斷路器`, { 
+            parameters, 
+            count: cached.count,
+            maxCount: this.MAX_SAME_CALL_COUNT,
+            toolName
+          });
+          
+          return { 
+            isBlocked: true, 
+            cachedResult: cached.result,
+            reason: `工具調用次數過多 (${cached.count}/${this.MAX_SAME_CALL_COUNT})，使用緩存結果`
+          };
+        }
+        
+        // 更新調用計數和最後調用時間
+        cached.count++;
+        cached.lastCallTime = now;
+        
+        console.warn(`🔄 [${toolName}] 檢測到重複工具調用`, { 
+          parameters, 
+          count: cached.count,
+          maxCount: this.MAX_SAME_CALL_COUNT,
+          timeSinceLastCall,
+          toolName
+        });
+      } else {
+        // 緩存過期，清除
+        this.toolCallCache.delete(cacheKey);
+      }
+    }
+    
+    return { isBlocked: false };
+  }
+
+  /**
+   * 緩存工具調用結果
+   */
+  private cacheToolCallResult(toolName: string, parameters: unknown, result: unknown): void {
+    const cacheKey = `${toolName}:${JSON.stringify(parameters)}`;
+    const now = Date.now();
+    
+    this.toolCallCache.set(cacheKey, {
+      timestamp: now,
+      count: 1,
+      result,
+      lastCallTime: now
+    });
+    
+    console.log(`📦 [${toolName}] 緩存工具調用結果`, { 
+      cacheKey: cacheKey.substring(0, 50) + '...',
+      cacheSize: this.toolCallCache.size,
+      toolName
+    });
+    
+    // 清理舊緩存
+    this.cleanupExpiredCache();
+  }
+
+  /**
+   * 清理過期緩存
+   */
+  private cleanupExpiredCache(): void {
+    const cutoffTime = Date.now() - this.CACHE_EXPIRY_MS;
+    let cleanedCount = 0;
+    
+    for (const [key, value] of this.toolCallCache.entries()) {
+      if (value.timestamp < cutoffTime) {
+        this.toolCallCache.delete(key);
+        cleanedCount++;
+      }
+    }
+    
+    if (cleanedCount > 0) {
+      console.log(`🧹 清理過期緩存: ${cleanedCount} 個條目`);
+    }
+  }
+
+  /**
+   * 安全工具調用包裝器
+   */
+  private async safeToolCall<T>(
+    toolName: string,
+    parameters: unknown,
+    handler: () => Promise<T>
+  ): Promise<T> {
+    // 檢查斷路器
+    const circuitCheck = this.checkToolCallCircuitBreaker(toolName, parameters);
+    
+    if (circuitCheck.isBlocked) {
+      console.log(`🚨 [CIRCUIT BREAKER] 阻止重複調用: ${toolName}`, { 
+        reason: circuitCheck.reason 
+      });
+      
+      // 拋出異常而不是返回錯誤對象
+      const errorMessage = circuitCheck.shouldWait 
+        ? `⛔ 工具調用頻率過高: ${toolName} - ${circuitCheck.reason}`
+        : `⛔ 斷路器啟動: ${toolName} - ${circuitCheck.reason}`;
+      
+      throw new Error(errorMessage);
+    }
+    
+    try {
+      // 執行實際的工具調用
+      const result = await handler();
+      
+      // 緩存成功結果
+      this.cacheToolCallResult(toolName, parameters, result);
+      
+      return result;
+    } catch (error) {
+      console.error(`❌ [${toolName}] 工具調用失敗`, { 
+        parameters, 
+        error: error instanceof Error ? error.message : error 
+      });
+      
+      // 對於失敗的調用，也要記錄以防止重複嘗試
+      this.cacheToolCallResult(toolName, parameters, { 
+        error: error instanceof Error ? error.message : 'Unknown error',
+        success: false 
+      });
+      
+      throw error;
     }
   }
 
@@ -99,37 +278,46 @@ export class DockerAIEditorManager {
             data: startResult.data,
             message: startResult.message,
             error: startResult.error
-          };
+          } as unknown as DockerAIToolResponse<T>;
         
         case 'docker_restart_dev_server':
-          this.logAction(`執行工具: ${toolName}`, { reason: parameters.reason });
-          const restartResult = await this.dockerToolkit.devServer.restartDevServer(parameters.reason);
+          this.logAction(`執行工具: ${toolName}`, { reason: (parameters as DockerAIToolParameters['docker_restart_dev_server']).reason });
+          const restartResult = await this.dockerToolkit.devServer.restartDevServer((parameters as DockerAIToolParameters['docker_restart_dev_server']).reason);
           return {
             success: restartResult.success,
             data: restartResult.data,
             message: restartResult.message,
             error: restartResult.error
-          };
+          } as unknown as DockerAIToolResponse<T>;
         
         case 'docker_kill_dev_server':
           this.logAction(`執行工具: ${toolName}`, {});
           const killResult = await this.dockerToolkit.devServer.killDevServer();
           return {
             success: killResult.success,
-            data: killResult.containerOutput,
+            data: killResult.success ? {
+              message: killResult.message || '開發伺服器已終止',
+              containerOutput: killResult.containerOutput
+            } : undefined,
             message: killResult.message,
             error: killResult.error
-          };
+          } as unknown as DockerAIToolResponse<T>;
         
         case 'docker_check_dev_server_status':
           this.logAction(`執行工具: ${toolName}`, {});
           const statusResult = await this.dockerToolkit.devServer.checkDevServerStatus();
           return {
             success: statusResult.success,
-            data: statusResult.data,
+            data: statusResult.data ? {
+              isRunning: statusResult.data.isRunning,
+              pid: statusResult.data.pid,
+              port: statusResult.data.port,
+              url: statusResult.data.url,
+              message: statusResult.message || '狀態檢查完成'
+            } : undefined,
             message: statusResult.message,
             error: statusResult.error
-          };
+          } as unknown as DockerAIToolResponse<T>;
         
         case 'docker_read_log_tail':
           return await this.handleReadLogTail(parameters as DockerAIToolParameters['docker_read_log_tail']) as DockerAIToolResponse<T>;
@@ -150,47 +338,53 @@ export class DockerAIEditorManager {
           return await this.handleReadFile(parameters as DockerAIToolParameters['docker_read_file']) as DockerAIToolResponse<T>;
         
         case 'docker_write_file':
-          this.logAction(`執行工具: ${toolName}`, { filePath: parameters.filePath });
+          const writeParams = parameters as DockerAIToolParameters['docker_write_file'];
+          this.logAction(`執行工具: ${toolName}`, { filePath: writeParams.filePath });
           const writeResult = await this.dockerToolkit.fileSystem.writeFile(
-            parameters.filePath,
-            parameters.content
+            writeParams.filePath,
+            writeParams.content
           );
           return {
             success: writeResult.success,
-            data: writeResult.data,
+            data: writeResult.success ? {
+              message: writeResult.message || '檔案寫入完成',
+              containerOutput: writeResult.containerOutput
+            } : undefined,
             message: writeResult.message,
             error: writeResult.error
-          };
+          } as unknown as DockerAIToolResponse<T>;
         
         case 'docker_list_directory':
-          this.logAction(`執行工具: ${toolName}`, { dirPath: parameters.dirPath });
+          const listParams = parameters as DockerAIToolParameters['docker_list_directory'];
+          this.logAction(`執行工具: ${toolName}`, { dirPath: listParams.dirPath });
           const listResult = await this.dockerToolkit.fileSystem.listDirectory(
-            parameters.dirPath,
+            listParams.dirPath || '.',
             {
-              recursive: parameters.recursive,
-              showHidden: parameters.showHidden,
-              useTree: parameters.useTree
+              recursive: listParams.recursive,
+              showHidden: listParams.showHidden,
+              useTree: listParams.useTree
             }
           );
           return {
             success: listResult.success,
-            data: listResult.data,
+            data: listResult.data || [],
             message: listResult.message,
             error: listResult.error
-          };
+          } as unknown as DockerAIToolResponse<T>;
         
         case 'docker_show_directory_tree':
-          this.logAction(`執行工具: ${toolName}`, { dirPath: parameters.dirPath });
+          const treeParams = parameters as DockerAIToolParameters['docker_show_directory_tree'];
+          this.logAction(`執行工具: ${toolName}`, { dirPath: treeParams.dirPath });
           const treeResult = await this.dockerToolkit.fileSystem.showDirectoryTree(
-            parameters.dirPath,
-            parameters.maxDepth
+            treeParams.dirPath || '.',
+            treeParams.maxDepth
           );
           return {
             success: treeResult.success,
-            data: treeResult.data,
+            data: treeResult.data ? [treeResult.data] : [],
             message: treeResult.message,
             error: treeResult.error
-          };
+          } as unknown as DockerAIToolResponse<T>;
         
         case 'docker_smart_monitor_and_recover':
           return await this.handleSmartMonitorAndRecover() as DockerAIToolResponse<T>;
@@ -281,19 +475,22 @@ export class DockerAIEditorManager {
   }
 
   private async handleCheckDevServerStatus(): Promise<DockerAIToolResponse<'docker_check_dev_server_status'>> {
-    const result = await this.dockerToolkit.devServer.checkDevServerStatus();
-    return {
-      success: result.success,
-      data: result.data ? {
-        isRunning: result.data.isRunning,
-        pid: result.data.pid,
-        port: result.data.port,
-        message: result.message || '狀態檢查完成'
-      } : undefined,
-      error: result.error,
-      message: result.message,
-      containerOutput: result.containerOutput
-    };
+    return this.safeToolCall('docker_check_dev_server_status', {}, async () => {
+      const result = await this.dockerToolkit.devServer.checkDevServerStatus();
+      return {
+        success: result.success,
+        data: result.data ? {
+          isRunning: result.data.isRunning,
+          pid: result.data.pid,
+          port: result.data.port,
+          url: result.data.url,
+          message: result.message || '狀態檢查完成'
+        } : undefined,
+        error: result.error,
+        message: result.message,
+        containerOutput: result.containerOutput
+      };
+    });
   }
 
   private async handleReadLogTail(params: DockerAIToolParameters['docker_read_log_tail']): Promise<DockerAIToolResponse<'docker_read_log_tail'>> {
@@ -603,7 +800,7 @@ export class DockerAIEditorManager {
         return true;
       }
       
-      this.logger.error('Auto-fix failed', { message: fixResult.message });
+      this.logger.error('Auto-fix failed', new Error(fixResult.message));
       return false;
       
     } catch (error) {
@@ -797,9 +994,9 @@ export class DockerAIEditorManager {
         return {
           success: true,
           message: `模擬模式：工具 ${toolName} 執行完成`,
-          data: null,
+          data: undefined,
           containerOutput: `Simulated: Tool ${toolName} executed`
-        } as DockerAIToolResponse<T>;
+        } as unknown as DockerAIToolResponse<T>;
     }
   }
 
@@ -820,21 +1017,47 @@ export class DockerAIEditorManager {
   /**
    * 獲取模擬數據
    */
-  private getMockData<T extends DockerAIToolName>(toolName: T): any {
+  private getMockData<T extends DockerAIToolName>(toolName: T): DockerAIToolResponse<T>['data'] | undefined {
     switch (toolName) {
       case 'docker_check_dev_server_status':
-        return { isRunning: false, pid: undefined, port: undefined };
+        return { isRunning: false, pid: undefined, port: undefined, message: '模擬狀態' } as DockerAIToolResponse<T>['data'];
       case 'docker_check_health':
-        return { status: 'down', responseTimeMs: 0, containerHealth: 'unhealthy' };
+        return { status: 'down', responseTimeMs: 0, containerHealth: 'unhealthy', message: '模擬健康檢查' } as DockerAIToolResponse<T>['data'];
       case 'docker_read_file':
-        return '';
+        return '' as DockerAIToolResponse<T>['data'];
       case 'docker_read_log_tail':
-        return ['Docker 容器不可用，無法讀取日誌'];
+        return ['Docker 容器不可用，無法讀取日誌'] as DockerAIToolResponse<T>['data'];
       case 'docker_get_log_files':
-        return [];
+        return [] as DockerAIToolResponse<T>['data'];
+      case 'docker_list_directory':
+        return [] as DockerAIToolResponse<T>['data'];
       default:
-        return null;
+        return undefined;
     }
+  }
+
+  // 修復模擬內容生成方法
+  private getSimulatedFileContent(filePath: string): string {
+    // 根據文件路徑返回模擬內容
+    if (filePath.includes('package.json')) {
+      return JSON.stringify({
+        name: "simulated-project",
+        version: "1.0.0",
+        description: "Simulated project for testing"
+      }, null, 2);
+    } else if (filePath.includes('.tsx') || filePath.includes('.jsx')) {
+      return `// 模擬的 React 組件檔案\nexport default function Component() {\n  return <div>Hello World</div>;\n}`;
+    } else {
+      return `// 模擬檔案內容: ${filePath}\n// 這是在模擬模式下生成的內容`;
+    }
+  }
+
+  private getSimulatedLogContent(lines: number): string[] {
+    const logs = [];
+    for (let i = 0; i < Math.min(lines, 20); i++) {
+      logs.push(`模擬日誌 ${i + 1}: [${new Date().toISOString()}] 應用程式運行正常`);
+    }
+    return logs;
   }
 
   // ==================== 公共方法 ====================

@@ -1,10 +1,10 @@
 // 增強的聊天 API 路由
 // 整合 SQLite 儲存和完整的上下文管理功能
 import { NextRequest, NextResponse } from 'next/server';
-import { chatContextManager, ChatResponse } from '@/lib/chat/chat-context-manager';
-import { createLangChainChatEngine } from '@/lib/ai/langchain-chat-engine';
-import { ProjectContext } from '@/lib/ai/context-manager';
+import { chatContextManager } from '@/lib/chat/chat-context-manager';
+import { createLangChainChatEngine, ProjectContext } from '@/lib/ai/langchain-chat-engine';
 import { AIMessage, HumanMessage } from '@langchain/core/messages';
+import { extractProjectFromUrl } from '@/lib/docker/docker-context-config';
 
 // 工具調用記錄介面
 export interface ToolCallRecord {
@@ -33,33 +33,20 @@ export interface ThoughtProcessRecord {
   timestamp: string;
 }
 
-// 專案名稱標準化函數 - 將前端的專案名稱映射到容器內的實際目錄名稱
-function normalizeProjectName(projectName: string, containerId?: string): string {
-  // 如果有容器 ID，嘗試從容器名稱提取正確的專案名稱
-  if (containerId && containerId.includes('ai-web-ide-')) {
-    const match = containerId.match(/^ai-web-ide-(.+?)-\d+$/);
-    if (match) {
-      // 將短橫線轉換為底線，這是容器內實際的目錄格式
-      return match[1].replace(/-/g, '_');
-    }
-  }
-
-  // 如果無法從容器 ID 提取，則標準化專案名稱
-  return projectName
-    .toLowerCase()
-    .replace(/\s+/g, '_')  // 空格轉為底線
-    .replace(/-/g, '_');   // 短橫線轉為底線
-}
-
 // 請求介面
 export interface EnhancedChatRequest {
   message?: string; // 對於創建房間操作，message 是可選的
   action?: 'create_room' | 'send_message'; // 操作類型
   roomId?: string; // 聊天室 ID，如果不提供則創建新的
-  projectId: string;
-  projectName: string;
+  projectId?: string; // 改為可選，優先從 URL 提取
+  projectName?: string; // 改為可選，優先從 URL 提取
   containerId?: string;
   apiToken: string;
+  
+  // 新增：前端 URL 或路由資訊
+  url?: string; // 前端當前 URL
+  referer?: string; // HTTP Referer
+  pathname?: string; // Next.js 路由路徑
   
   // 可選配置
   model?: string;
@@ -81,6 +68,7 @@ export interface EnhancedChatResponse {
     contextUsed: string; // 使用的上下文內容
     toolCalls?: ToolCallRecord[]; // 工具調用記錄
     thoughtProcess?: ThoughtProcessRecord; // 思考過程記錄
+    projectContext?: ProjectContext; // 使用的專案上下文
     stats?: {
       totalCalls: number;
       successfulCalls: number;
@@ -92,20 +80,98 @@ export interface EnhancedChatResponse {
   error?: string;
 }
 
-// Langchain 引擎實例管理（按專案和 API Token 組合）
+// Langchain 引擎實例管理（按專案上下文組合）
 const chatEngines = new Map<string, ReturnType<typeof createLangChainChatEngine>>();
+
+/**
+ * 從請求中提取專案上下文
+ */
+function extractProjectContextFromRequest(request: NextRequest, body: EnhancedChatRequest): ProjectContext {
+  const context: ProjectContext = {};
+  
+  // 1. 優先使用請求體中的 URL
+  if (body.url) {
+    context.url = body.url;
+    console.log(`📍 從請求體獲取 URL: ${body.url}`);
+  }
+  
+  // 2. 從 HTTP Referer 獲取 URL
+  else if (body.referer || request.headers.get('referer')) {
+    const refererUrl = body.referer || request.headers.get('referer');
+    if (refererUrl) {
+      context.url = refererUrl;
+      console.log(`📍 從 Referer 獲取 URL: ${refererUrl}`);
+    }
+  }
+  
+  // 3. 如果有路徑資訊，構建 URL
+  else if (body.pathname) {
+    const origin = request.headers.get('origin') || 'http://localhost:3000';
+    context.url = `${origin}${body.pathname}`;
+    console.log(`📍 從路徑構建 URL: ${context.url}`);
+  }
+  
+  // 4. 如果有明確的專案 ID 或名稱，使用這些
+  if (body.projectId) {
+    context.projectId = body.projectId;
+    console.log(`📍 從請求體獲取專案 ID: ${body.projectId}`);
+  }
+  
+  if (body.projectName) {
+    context.projectName = body.projectName;
+    console.log(`📍 從請求體獲取專案名稱: ${body.projectName}`);
+  }
+  
+  if (body.containerId) {
+    context.containerId = body.containerId;
+    console.log(`📍 從請求體獲取容器 ID: ${body.containerId}`);
+  }
+  
+  // 5. 如果有 URL，嘗試從中提取專案資訊
+  if (context.url && !context.projectId) {
+    const projectId = extractProjectFromUrl(context.url);
+    if (projectId) {
+      context.projectId = projectId;
+      console.log(`📍 從 URL 提取專案 ID: ${projectId}`);
+    }
+  }
+  
+  console.log(`📍 最終專案上下文:`, context);
+  return context;
+}
+
+/**
+ * 生成引擎快取鍵
+ */
+function generateEngineKey(context: ProjectContext, apiToken: string): string {
+  const parts: string[] = [];
+  
+  if (context.projectId) parts.push(`id:${context.projectId}`);
+  if (context.projectName) parts.push(`name:${context.projectName}`);
+  if (context.containerId) parts.push(`container:${context.containerId.substring(0, 12)}`);
+  if (context.url) {
+    const projectFromUrl = extractProjectFromUrl(context.url);
+    if (projectFromUrl) parts.push(`url:${projectFromUrl}`);
+  }
+  
+  parts.push(`token:${apiToken.substring(0, 10)}`);
+  
+  return parts.join('_');
+}
 
 /**
  * 獲取或創建 Langchain 引擎
  */
-async function getOrCreateChatEngine(projectId: string, projectName: string, apiToken: string, containerId?: string): Promise<ReturnType<typeof createLangChainChatEngine>> {
-  const engineKey = `${projectId}_${apiToken.substring(0, 10)}`;
+async function getOrCreateChatEngine(
+  context: ProjectContext, 
+  apiToken: string
+): Promise<ReturnType<typeof createLangChainChatEngine>> {
+  const engineKey = generateEngineKey(context, apiToken);
   
   if (!chatEngines.has(engineKey)) {
     console.log(`🚀 創建新的 Langchain 引擎: ${engineKey}`);
-    const normalizedProjectName = normalizeProjectName(projectName, containerId);
-    console.log(`🔧 Project name normalized for Langchain engine: ${projectName} -> ${normalizedProjectName}`);
-    const engine = await createLangChainChatEngine(normalizedProjectName);
+    console.log(`🔧 使用專案上下文:`, context);
+    const engine = await createLangChainChatEngine(context);
     chatEngines.set(engineKey, engine);
   }
   
@@ -210,26 +276,15 @@ export async function POST(request: NextRequest): Promise<NextResponse<EnhancedC
       message,
       action = 'send_message',
       roomId,
-      projectId,
-      projectName,
-      containerId,
       apiToken,
       contextLength = 10,
     } = body;
 
-    // 驗證必要參數
-    if (!projectId || !projectName || !apiToken) {
+    // 驗證 API Token
+    if (!apiToken) {
       return NextResponse.json({
         success: false,
-        error: '缺少必要參數: projectId, projectName, apiToken'
-      }, { status: 400 });
-    }
-
-    // 對於發送訊息操作，message 是必需的
-    if (action === 'send_message' && !message) {
-      return NextResponse.json({
-        success: false,
-        error: '發送訊息時 message 參數是必需的'
+        error: '缺少必要參數: apiToken'
       }, { status: 400 });
     }
 
@@ -240,10 +295,22 @@ export async function POST(request: NextRequest): Promise<NextResponse<EnhancedC
       }, { status: 401 });
     }
 
+    // 對於發送訊息操作，message 是必需的
+    if (action === 'send_message' && !message) {
+      return NextResponse.json({
+        success: false,
+        error: '發送訊息時 message 參數是必需的'
+      }, { status: 400 });
+    }
+
+    // 提取專案上下文
+    const projectContext = extractProjectContextFromRequest(request, body);
+    console.log(`📍 提取的專案上下文:`, projectContext);
+
     // 生成或使用現有的聊天室 ID
     const currentRoomId = roomId || generateId('room');
 
-    console.log(`💬 處理請求 - 操作: ${action}, 房間: ${currentRoomId}, 專案: ${projectName}`);
+    console.log(`💬 處理請求 - 操作: ${action}, 房間: ${currentRoomId}, 上下文:`, projectContext);
 
     // 處理清理請求
     if (message === '__CLEANUP__') {
@@ -255,17 +322,22 @@ export async function POST(request: NextRequest): Promise<NextResponse<EnhancedC
           messageId: generateId('cleanup'),
           roomId: currentRoomId,
           contextUsed: '',
+          projectContext
         }
       });
     }
 
+    // 在發送訊息或創建房間之前，確保房間存在
+    // 使用從上下文提取的專案資訊
+    const room = await chatContextManager.getOrCreateChatRoom(
+      currentRoomId,
+      projectContext.projectId || projectContext.projectName || 'unknown',
+      projectContext.projectName || projectContext.projectId || 'unknown',
+      projectContext.containerId
+    );
+    console.log(`🏠 房間已確保存在: ${room.id}`);
+
     if (action === 'create_room') {
-      const room = await chatContextManager.getOrCreateChatRoom(
-        currentRoomId,
-        projectId,
-        projectName,
-        containerId,
-      );
       console.log(`🏠 創建聊天室完成: ${room.id}`);
 
       // 獲取歡迎訊息
@@ -278,6 +350,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<EnhancedC
           messageId: messages.length > 0 ? messages[0].id : '',
           roomId: room.id,
           contextUsed: '', // No context used for creation
+          projectContext
         },
       });
     }
@@ -291,11 +364,11 @@ export async function POST(request: NextRequest): Promise<NextResponse<EnhancedC
     }
 
     // 1. 儲存用戶訊息
-    const userMessage = await chatContextManager.addUserMessage(currentRoomId, message!);
+    const userMessage = await chatContextManager.addUserMessage(room.id, message!);
     console.log(`📝 用戶訊息已儲存: ${userMessage.id}`);
 
     // 2. 獲取對話歷史
-    const history = await chatContextManager.getChatHistory(currentRoomId, contextLength);
+    const history = await chatContextManager.getChatHistory(room.id, contextLength);
     // 將最後一條訊息(也就是剛加入的用戶訊息)排除，因為它會作為 input 傳入
     const chatHistoryMessages = history
       .slice(0, -1) 
@@ -307,7 +380,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<EnhancedC
     console.log(`🧠 已獲取 ${chatHistoryMessages.length} 則對話歷史`);
 
     // 3. 獲取 Langchain 引擎
-    const chatEngine = await getOrCreateChatEngine(projectId, projectName, apiToken, containerId);
+    const chatEngine = await getOrCreateChatEngine(projectContext, apiToken);
 
     // 4. 調用 Langchain 引擎
     console.log('🤖 開始處理 AI 回應...');
@@ -321,8 +394,19 @@ export async function POST(request: NextRequest): Promise<NextResponse<EnhancedC
     
     // 5. 處理和記錄回應
     // AgentExecutor 的輸出可能在 'output' 或 'intermediateSteps' 中
-    const aiResponse = (result.output || result.toString()) as string;
-    const toolCalls = (result.intermediateSteps || []).map((step: any) => ({
+    let aiResponse = (result.output || result.toString()) as string;
+    
+    // 確保 AI 回應不為 null 或空字串
+    if (!aiResponse || aiResponse.trim() === '' || aiResponse === 'null' || aiResponse === 'undefined') {
+      aiResponse = '抱歉，我遇到了一些技術問題，無法產生適當的回應。請稍後再試或重新描述您的問題。';
+      console.warn('⚠️ AI 回應為空或無效，使用預設回應', { 
+        originalOutput: result.output,
+        resultString: result.toString(),
+        fullResult: result 
+      });
+    }
+    
+    const toolCalls = (result.intermediateSteps || []).map((step: { action: { tool: string; toolInput: Record<string, unknown> }; observation: unknown }) => ({
       tool: step.action.tool,
       input: step.action.toolInput,
       output: step.observation,
@@ -330,49 +414,79 @@ export async function POST(request: NextRequest): Promise<NextResponse<EnhancedC
       duration: 0, // 暫時無法獲取
     }));
 
-    const aiMessageId = generateId('msg-ai');
-
-    const recordedToolCalls = await recordToolCalls(currentRoomId, userMessage.id, toolCalls);
-    const thoughtProcess = await recordThoughtProcess(currentRoomId, userMessage.id, result.thoughtProcess);
-
-    const responsePayload: ChatResponse = {
+    // 6. 儲存 AI 回應
+    const aiMessage = await chatContextManager.addAssistantMessage(room.id, {
       message: aiResponse,
-      messageId: aiMessageId,
-      toolCallsExecuted: recordedToolCalls.length,
-      stats: {
-        totalCalls: recordedToolCalls.length,
-        successfulCalls: recordedToolCalls.filter(c => c.success).length,
-        failedCalls: recordedToolCalls.filter(c => !c.success).length,
-        averageExecutionTime: recordedToolCalls.reduce((acc, c) => acc + c.duration, 0) / (recordedToolCalls.length || 1),
-        toolUsage: recordedToolCalls.reduce((acc, c) => {
-          acc[c.toolName] = (acc[c.toolName] || 0) + 1;
-          return acc;
-        }, {} as Record<string, number>),
-      },
-    };
-
-    const aiMessage = await chatContextManager.addAssistantMessage(currentRoomId, responsePayload);
+      messageId: generateId('ai-msg'),
+      toolCallsExecuted: toolCalls.length
+    });
     console.log(`🤖 AI 回應已儲存: ${aiMessage.id}`);
 
-    // 6. 返回回應
+    // 7. 記錄工具調用
+    const toolCallRecords = await recordToolCalls(room.id, aiMessage.id, toolCalls);
+
+    // 8. 記錄思考過程（從 result 中提取）
+    const thoughtProcess = await recordThoughtProcess(
+      room.id,
+      aiMessage.id,
+      result.thoughtProcess
+    );
+
+    // 9. 計算統計資訊
+    const toolCallsExecuted = toolCallRecords.length;
+    const successfulCalls = toolCallRecords.filter(call => call.success).length;
+    const failedCalls = toolCallsExecuted - successfulCalls;
+    const averageExecutionTime = toolCallRecords.length > 0 
+      ? toolCallRecords.reduce((sum, call) => sum + call.duration, 0) / toolCallRecords.length 
+      : 0;
+
+    // 統計工具使用
+    const toolUsage: Record<string, number> = {};
+    toolCallRecords.forEach(call => {
+      toolUsage[call.toolName] = (toolUsage[call.toolName] || 0) + 1;
+    });
+
+    // 構建上下文資訊字串
+    const contextUsed = [
+      `對話歷史: ${chatHistoryMessages.length} 則`,
+      `專案上下文: ${JSON.stringify(projectContext)}`,
+      toolCallsExecuted > 0 ? `執行工具: ${toolCallsExecuted} 次` : '',
+    ].filter(Boolean).join(', ');
+
+    console.log(`📊 請求處理完成 - 工具調用: ${toolCallsExecuted}, 成功: ${successfulCalls}, 失敗: ${failedCalls}`);
+
     return NextResponse.json({
       success: true,
       data: {
-        ...responsePayload,
-        roomId: currentRoomId,
-        contextUsed: `History length: ${chatHistoryMessages.length}`,
-        toolCalls: recordedToolCalls,
+        message: aiResponse,
+        messageId: aiMessage.id,
+        roomId: room.id,
+        toolCallsExecuted,
+        contextUsed,
+        projectContext,
+        toolCalls: toolCallRecords,
         thoughtProcess,
-      },
+        stats: {
+          totalCalls: toolCallsExecuted,
+          successfulCalls,
+          failedCalls,
+          averageExecutionTime,
+          toolUsage,
+        }
+      }
     });
 
-  } catch (error: any) {
-    console.error('🔴 聊天 API 出錯:', error);
-    
+  } catch (error) {
+    console.error('❌ 處理聊天請求時發生錯誤:', error);
+
+    const errorMessage = error instanceof Error ? error.message : '未知錯誤';
+    const isRateLimitError = errorMessage.includes('rate limit') || errorMessage.includes('quota');
+    const statusCode = isRateLimitError ? 429 : 500;
+
     return NextResponse.json({
       success: false,
-      error: error instanceof Error ? error.message : '未知錯誤'
-    }, { status: 500 });
+      error: `處理請求失敗: ${errorMessage}`
+    }, { status: statusCode });
   }
 }
 
