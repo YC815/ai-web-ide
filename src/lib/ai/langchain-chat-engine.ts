@@ -188,7 +188,34 @@ export async function createLangChainChatEngine(
       description: tool.schema.description,
       // 建立一個執行函數，它會呼叫我們統一的執行器
       func: async (args: any) => {
-        console.log(`[Agent Tool] 執行工具: ${tool.schema.name}，參數:`, args);
+        console.log(`[Agent Tool] 執行工具: ${tool.schema.name}，原始參數:`, args);
+        
+        // 處理 LangChain 的參數格式
+        let processedArgs = args;
+        
+        // 如果 args 是字符串，嘗試解析為 JSON
+        if (typeof args === 'string') {
+          try {
+            processedArgs = JSON.parse(args);
+          } catch {
+            // 如果解析失敗，根據工具類型進行智能處理
+            if (tool.schema.name === 'docker_ls' || tool.schema.name === 'docker_tree') {
+              processedArgs = { path: args };
+            } else if (tool.schema.name === 'docker_read_file') {
+              processedArgs = { filePath: args };
+            } else {
+              processedArgs = { input: args };
+            }
+          }
+        }
+        
+        // 處理嵌套的 input 結構（LangChain 有時會這樣包裝參數）
+        if (processedArgs && typeof processedArgs === 'object' && processedArgs.input && typeof processedArgs.input === 'object') {
+          console.log(`[Agent Tool] 檢測到嵌套 input 結構，解包參數`);
+          processedArgs = processedArgs.input;
+        }
+        
+        console.log(`[Agent Tool] 處理後參數:`, processedArgs);
         
         // 如果工具需要 Docker 但上下文不存在，則返回錯誤
         if (requiresDocker && !dockerContext) {
@@ -206,7 +233,7 @@ export async function createLangChainChatEngine(
           } : normalizedContext;
           
           // 將增強的 context 傳遞給執行器
-          const result = await executeToolById(tool.id, args, enhancedContext);
+          const result = await executeToolById(tool.id, processedArgs, enhancedContext);
           const resultString = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
           console.log(`[Agent Tool] 工具 ${tool.schema.name} 執行成功，結果長度: ${resultString.length}`);
           
