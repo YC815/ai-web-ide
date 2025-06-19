@@ -42,22 +42,31 @@ export function convertToLangchainTool(functionDef: FunctionDefinition, context:
           
           if (functionDef.schema.name === 'docker_list_directory') {
             // 專門處理 docker_list_directory 工具
-            parameters = { input: input, dirPath: input };
-          } else if (functionDef.schema.name.includes('file') && functionDef.schema.name.includes('read')) {
+            parameters = { dirPath: input };
+          } else if (functionDef.schema.name === 'docker_read_file') {
             // 處理讀取檔案工具
             parameters = { filePath: input };
+          } else if (functionDef.schema.name === 'docker_ls') {
+            // 處理 ls 工具
+            parameters = { path: input };
+          } else if (functionDef.schema.name === 'docker_tree') {
+            // 處理 tree 工具
+            parameters = { path: input };
+          } else if (functionDef.schema.name.includes('file') && functionDef.schema.name.includes('read')) {
+            // 處理其他讀取檔案工具
+            parameters = { filePath: input };
           } else if (functionDef.schema.name.includes('directory') || functionDef.schema.name.includes('list')) {
-            // 處理目錄列表工具
-            parameters = { dirPath: input, directoryPath: input };
+            // 處理其他目錄列表工具
+            parameters = { dirPath: input };
           } else {
-            // 通用處理：提供多種可能的參數名稱
-            parameters = { 
-              input: input,
-              path: input,
-              filePath: input,
-              dirPath: input,
-              directoryPath: input
-            };
+            // 通用處理：根據工具名稱推斷正確的參數名稱
+            if (functionDef.schema.name.includes('path') || functionDef.schema.name.includes('tree') || functionDef.schema.name.includes('ls')) {
+              parameters = { path: input };
+            } else if (functionDef.schema.name.includes('file')) {
+              parameters = { filePath: input };
+            } else {
+              parameters = { input: input };
+            }
           }
           console.log(`[LangChain綁定器] 智能解析結果:`, parameters);
         }
