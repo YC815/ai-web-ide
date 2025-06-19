@@ -210,9 +210,51 @@ export async function createLangChainChatEngine(
         }
         
         // 處理嵌套的 input 結構（LangChain 有時會這樣包裝參數）
-        if (processedArgs && typeof processedArgs === 'object' && processedArgs.input && typeof processedArgs.input === 'object') {
+        if (processedArgs && typeof processedArgs === 'object' && processedArgs.input) {
           console.log(`[Agent Tool] 檢測到嵌套 input 結構，解包參數`);
-          processedArgs = processedArgs.input;
+          if (typeof processedArgs.input === 'object') {
+            processedArgs = processedArgs.input;
+          } else if (typeof processedArgs.input === 'string') {
+            // 如果 input 是字符串，根據工具類型映射
+            if (tool.schema.name === 'docker_ls' || tool.schema.name === 'docker_tree') {
+              processedArgs = { path: processedArgs.input };
+            } else if (tool.schema.name === 'docker_read_file') {
+              processedArgs = { filePath: processedArgs.input };
+            } else {
+              processedArgs = { input: processedArgs.input };
+            }
+          }
+        }
+        
+        // 處理工作目錄問題：如果是 Docker 工具且有 Docker 上下文，調整路徑
+        if (requiresDocker && dockerContext && processedArgs && typeof processedArgs === 'object') {
+          if (processedArgs.path && typeof processedArgs.path === 'string') {
+            // 如果路徑不是絕對路徑且不包含 workspace，自動添加工作目錄前綴
+            if (!processedArgs.path.startsWith('/') && !processedArgs.path.includes('workspace')) {
+              const workingDir = dockerContext.workingDirectory || '/app';
+              if (workingDir.includes('workspace')) {
+                // 如果工作目錄已經包含 workspace，直接使用相對路徑
+                console.log(`[Agent Tool] 使用工作目錄相對路徑: ${processedArgs.path}`);
+              } else {
+                // 否則需要添加完整的 workspace 路徑
+                const projectName = dockerContext.containerName?.match(/ai-web-ide-(.+?)-\d+$/)?.[1];
+                if (projectName && processedArgs.path !== '.') {
+                  processedArgs.path = `/app/workspace/${projectName}/${processedArgs.path}`;
+                  console.log(`[Agent Tool] 調整為完整路徑: ${processedArgs.path}`);
+                }
+              }
+            }
+          }
+          if (processedArgs.filePath && typeof processedArgs.filePath === 'string') {
+            // 同樣處理 filePath
+            if (!processedArgs.filePath.startsWith('/') && !processedArgs.filePath.includes('workspace')) {
+              const projectName = dockerContext.containerName?.match(/ai-web-ide-(.+?)-\d+$/)?.[1];
+              if (projectName) {
+                processedArgs.filePath = `/app/workspace/${projectName}/${processedArgs.filePath}`;
+                console.log(`[Agent Tool] 調整檔案路徑: ${processedArgs.filePath}`);
+              }
+            }
+          }
         }
         
         console.log(`[Agent Tool] 處理後參數:`, processedArgs);
