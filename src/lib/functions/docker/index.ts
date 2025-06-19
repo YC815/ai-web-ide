@@ -804,13 +804,13 @@ export const dockerReadFile: FunctionDefinition = {
   id: 'docker_read_file',
   schema: {
     name: 'docker_read_file',
-    description: '讀取 Docker 容器內的檔案內容',
+    description: '讀取 Docker 容器內的檔案內容。⚠️ 重要：參數名稱必須是 "filePath"，不是 "input"',
     parameters: {
       type: 'object',
       properties: {
         filePath: {
           type: 'string',
-          description: '要讀取的檔案路徑（相對於專案根目錄）'
+          description: '要讀取的檔案路徑（相對於專案根目錄）。注意：參數名稱必須是 "filePath"'
         }
       },
       required: ['filePath']
@@ -819,7 +819,7 @@ export const dockerReadFile: FunctionDefinition = {
   metadata: {
     category: ToolCategory.DOCKER,
     accessLevel: FunctionAccessLevel.RESTRICTED,
-    version: '2.1.0', // Incremented version
+    version: '2.2.0', // Incremented version
     author: 'AI Creator Team',
     tags: ['docker', 'file', 'read'],
     requiresAuth: true,
@@ -828,21 +828,32 @@ export const dockerReadFile: FunctionDefinition = {
   },
   handler: async (parameters: { filePath: string }, context?: any) => {
     return safeToolCall('docker_read_file', parameters, async () => {
-      const toolkit = await getRealDockerToolkit(context);
-      const result = await toolkit.fileSystem.readFile(parameters.filePath);
-      if (!result.success) {
-        throw new Error(result.error || `無法讀取檔案: ${parameters.filePath}`);
-      }
-      return result.data;
+      return await docker_read_file(parameters.filePath, context);
     });
   },
-  validator: async (parameters: { filePath: string }) => {
+  validator: async (parameters: any) => {
+    // 檢查是否使用了錯誤的參數名稱
+    if (parameters.input && !parameters.filePath) {
+      return { 
+        isValid: false, 
+        reason: '❌ 參數名稱錯誤！應該使用 "filePath" 而不是 "input"。正確格式：{ "filePath": "src/app/page.tsx" }' 
+      };
+    }
+    
     if (!parameters.filePath || typeof parameters.filePath !== 'string') {
-      return { isValid: false, reason: 'filePath 必須是非空字串' };
+      return { 
+        isValid: false, 
+        reason: '參數 "filePath" 必須是非空字串。正確格式：{ "filePath": "src/app/page.tsx" }' 
+      };
     }
+    
     if (parameters.filePath.includes('..')) {
-      return { isValid: false, reason: '檔案路徑不能包含 ..' };
+      return { 
+        isValid: false, 
+        reason: '檔案路徑不能包含 ".." 以確保安全性' 
+      };
     }
+    
     return { isValid: true };
   }
 };
@@ -852,13 +863,13 @@ export const dockerLs: FunctionDefinition = {
   id: 'docker_ls',
   schema: {
     name: 'docker_ls',
-    description: '列出 Docker 容器內目錄內容（標準 Unix ls 命令）',
+    description: '列出 Docker 容器內目錄內容（標準 Unix ls 命令）。⚠️ 重要：參數名稱必須是 "path"，不是 "input" 或 "directoryPath"',
     parameters: {
       type: 'object',
       properties: {
         path: {
           type: 'string',
-          description: '目錄路徑（預設為當前目錄 "."）',
+          description: '目錄路徑（預設為當前目錄 "."）。注意：參數名稱必須是 "path"',
           default: '.'
         },
         long: {
@@ -887,7 +898,7 @@ export const dockerLs: FunctionDefinition = {
   metadata: {
     category: ToolCategory.DOCKER,
     accessLevel: FunctionAccessLevel.RESTRICTED,
-    version: '3.0.0',
+    version: '3.1.0', // Incremented version
     author: 'AI Creator Team',
     tags: ['docker', 'ls', 'directory', 'unix'],
     requiresAuth: true,
@@ -916,6 +927,25 @@ export const dockerLs: FunctionDefinition = {
       // 返回標準 ls 命令輸出格式
       return result.output || result.files?.join('\n') || '';
     });
+  },
+  validator: async (parameters: any) => {
+    // 檢查是否使用了錯誤的參數名稱
+    if ((parameters.input || parameters.directoryPath) && !parameters.path) {
+      return { 
+        isValid: false, 
+        reason: '❌ 參數名稱錯誤！應該使用 "path" 而不是 "input" 或 "directoryPath"。正確格式：{ "path": "src" }' 
+      };
+    }
+    
+    // path 參數是可選的，預設為 '.'
+    if (parameters.path && typeof parameters.path !== 'string') {
+      return { 
+        isValid: false, 
+        reason: '參數 "path" 必須是字串。正確格式：{ "path": "src" }' 
+      };
+    }
+    
+    return { isValid: true };
   }
 };
 
@@ -924,13 +954,13 @@ export const dockerTree: FunctionDefinition = {
   id: 'docker_tree',
   schema: {
     name: 'docker_tree',
-    description: '顯示 Docker 容器內目錄樹狀結構（標準 Unix tree 命令）',
+    description: '顯示 Docker 容器內目錄樹狀結構（標準 Unix tree 命令）。⚠️ 重要：參數名稱必須是 "path"，不是 "input" 或 "directoryPath"',
     parameters: {
       type: 'object',
       properties: {
         path: {
           type: 'string',
-          description: '目錄路徑（預設為當前目錄 "."）',
+          description: '目錄路徑（預設為當前目錄 "."）。注意：參數名稱必須是 "path"',
           default: '.'
         },
         depth: {
@@ -960,7 +990,7 @@ export const dockerTree: FunctionDefinition = {
   metadata: {
     category: ToolCategory.DOCKER,
     accessLevel: FunctionAccessLevel.RESTRICTED,
-    version: '3.0.0',
+    version: '3.1.0', // Incremented version
     author: 'AI Creator Team',
     tags: ['docker', 'tree', 'directory', 'unix'],
     requiresAuth: true,
@@ -988,6 +1018,32 @@ export const dockerTree: FunctionDefinition = {
       
       return result.output || '';
     });
+  },
+  validator: async (parameters: any) => {
+    // 檢查是否使用了錯誤的參數名稱
+    if ((parameters.input || parameters.directoryPath || parameters.dirPath) && !parameters.path) {
+      return { 
+        isValid: false, 
+        reason: '❌ 參數名稱錯誤！應該使用 "path" 而不是 "input"、"directoryPath" 或 "dirPath"。正確格式：{ "path": "src" }' 
+      };
+    }
+    
+    // path 參數是可選的，預設為 '.'
+    if (parameters.path && typeof parameters.path !== 'string') {
+      return { 
+        isValid: false, 
+        reason: '參數 "path" 必須是字串。正確格式：{ "path": "src" }' 
+      };
+    }
+    
+    if (parameters.depth && (typeof parameters.depth !== 'number' || parameters.depth < 1 || parameters.depth > 10)) {
+      return { 
+        isValid: false, 
+        reason: '參數 "depth" 必須是 1-10 之間的數字' 
+      };
+    }
+    
+    return { isValid: true };
   }
 };
 
@@ -1102,12 +1158,7 @@ export const dockerWriteFile: FunctionDefinition = {
   },
   handler: async (parameters: { filePath: string; content: string }, context?: any) => {
     return safeToolCall('docker_write_file', parameters, async () => {
-      const toolkit = await getRealDockerToolkit(context);
-      const result = await toolkit.fileSystem.writeFile(parameters.filePath, parameters.content);
-      if (!result.success) {
-          throw new Error(result.error || `無法寫入檔案: ${parameters.filePath}`);
-      }
-      return result.data;
+      return await docker_write_file(parameters.filePath, parameters.content, context);
     });
   },
   validator: async (parameters: { filePath: string; content: string }) => {

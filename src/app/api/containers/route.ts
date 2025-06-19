@@ -2,21 +2,27 @@ import { NextRequest, NextResponse } from 'next/server';
 import { spawn } from 'child_process';
 
 // 執行 shell 命令的輔助函數
-const execCommand = (command: string, args: string[], timeoutMs: number = 5000): Promise<string> => {
+const execCommand = (command: string, args: string[], timeoutMs: number = 30000): Promise<string> => {
   return new Promise((resolve, reject) => {
+    console.log(`🔧 執行命令: ${command} ${args.join(' ')}`);
     const child = spawn(command, args, { stdio: 'pipe' });
     let stdout = '';
     let stderr = '';
     
     child.stdout.on('data', (data) => {
-      stdout += data.toString();
+      const output = data.toString();
+      stdout += output;
+      console.log(`📤 STDOUT: ${output.trim()}`);
     });
     
     child.stderr.on('data', (data) => {
-      stderr += data.toString();
+      const output = data.toString();
+      stderr += output;
+      console.log(`⚠️ STDERR: ${output.trim()}`);
     });
     
     child.on('close', (code) => {
+      console.log(`✅ 命令完成，退出碼: ${code}`);
       if (code === 0) {
         resolve(stdout);
       } else {
@@ -24,8 +30,9 @@ const execCommand = (command: string, args: string[], timeoutMs: number = 5000):
       }
     });
     
-    // 設置可配置的超時
+    // 設置可配置的超時 (增加到30秒)
     const timeout = setTimeout(() => {
+      console.log(`⏰ 命令超時 (${timeoutMs}ms)，強制終止`);
       child.kill();
       reject(new Error(`Docker command timeout (${timeoutMs}ms)`));
     }, timeoutMs);
@@ -161,7 +168,7 @@ const getAIWebIDEContainers = async () => {
   return { containers, debugOutput: allContainersOutput };
 };
 
-// 創建新的專案容器
+  // 創建新的專案容器
 const createProjectContainer = async (
   projectName: string, 
   description: string, 
@@ -172,6 +179,8 @@ const createProjectContainer = async (
   const timestamp = Date.now();
   const containerName = `ai-web-ide-${projectName.toLowerCase().replace(/[^a-z0-9]/g, '-')}-${timestamp}`;
   
+  console.log(`🚀 開始創建專案容器: ${projectName}`);
+  console.log(`🏷️ 容器名稱: ${containerName}`);
   if (onLog) onLog(`🚀 開始創建容器: ${containerName}`);
   
   // 創建容器工作目錄
@@ -179,6 +188,9 @@ const createProjectContainer = async (
   
   // 創建並啟動容器
   if (onLog) onLog(`📦 正在創建 Docker 容器...`);
+  console.log(`🏗️ 創建容器: ${containerName}`);
+  console.log(`📁 工作目錄: ${workspaceDir}`);
+  
   const containerId = await execCommand('docker', [
     'run', '-d',
     '--name', containerName,
@@ -191,6 +203,7 @@ const createProjectContainer = async (
     'sh', '-c', 'while true; do sleep 3600; done' // 保持容器運行
   ]);
   
+  console.log(`🎯 容器 ID: ${containerId.trim()}`);
   if (onLog) onLog(`✅ 容器創建成功: ${containerId.trim()}`);
   
   // 安裝系統工具
@@ -233,17 +246,37 @@ const createProjectContainer = async (
   // 自動初始化 Next.js 專案
   if (onLog) onLog(`🚀 開始初始化 Next.js 專案...`);
   
-  // 在容器內執行 npx create-next-app
-  await execCommandWithLogs('docker', [
-    'exec', 
-    '-w', '/app/workspace', // 設置工作目錄
-    containerName,
-    'npx', 'create-next-app@latest', projectName, 
-    '--typescript', '--tailwind', '--eslint', 
-    '--app', '--src-dir', '--import-alias', '"@/*"', '--yes'
-  ], onLog, 600000); // 增加超時至 10 分鐘
-  
-  if (onLog) onLog(`✅ Next.js 專案初始化完成`);
+  try {
+    // 在容器內執行 npx create-next-app
+    await execCommandWithLogs('docker', [
+      'exec', 
+      '-w', '/app/workspace', // 設置工作目錄
+      containerName,
+      'npx', 'create-next-app@latest', projectName, 
+      '--typescript', '--tailwind', '--eslint', 
+      '--app', '--src-dir', '--import-alias', '"@/*"', '--yes'
+    ], onLog, 600000); // 增加超時至 10 分鐘
+    
+    if (onLog) onLog(`✅ Next.js 專案初始化完成`);
+  } catch (nextjsError) {
+    console.error('Next.js 初始化失敗:', nextjsError);
+    if (onLog) onLog(`❌ Next.js 初始化失敗: ${nextjsError instanceof Error ? nextjsError.message : 'Unknown error'}`);
+    
+    // 即使 Next.js 初始化失敗，也不要中斷整個流程
+    // 創建一個基本的工作目錄
+    if (onLog) onLog(`🔄 創建基本工作目錄...`);
+    await execCommand('docker', [
+      'exec', containerName,
+      'mkdir', '-p', `/app/workspace/${projectName}`
+    ]);
+    
+    if (onLog) onLog(`📝 創建基本 package.json...`);
+    await execCommand('docker', [
+      'exec', containerName,
+      'sh', '-c',
+      `echo '{"name":"${projectName}","version":"1.0.0","scripts":{"dev":"echo \\"Please manually set up your project\\""}}' > /app/workspace/${projectName}/package.json`
+         ]);
+   }
   
   // 設置工作目錄權限
   if (onLog) onLog(`🔐 設置專案權限...`);
@@ -413,6 +446,8 @@ export async function POST(request: NextRequest) {
                 controller.enqueue(`data: ${JSON.stringify({ type: 'complete', container: newContainer })}\n\n`);
               } catch (error) {
                 const errorMessage = error instanceof Error ? error.message : '未知錯誤';
+                console.error('💥 容器創建過程失敗:', error);
+                console.error('📋 錯誤詳情:', errorMessage);
                 onLog(`❌ 創建失敗: ${errorMessage}`);
                 controller.enqueue(`data: ${JSON.stringify({ type: 'error', error: errorMessage })}\n\n`);
               } finally {

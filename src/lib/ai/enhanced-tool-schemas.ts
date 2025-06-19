@@ -40,11 +40,13 @@ export enum ToolCategory {
 // === 核心工具 Schema 定義 ===
 
 /**
- * 檔案讀取工具 - 增強版
+ * Docker 檔案讀取工具 - 明確參數定義
+ * 
+ * ⚠️ 重要：參數名稱必須是 filePath，不是 input
  */
-export const READ_FILE_SCHEMA: EnhancedToolSchema = {
-  name: 'read_file',
-  description: `讀取指定檔案的內容。
+export const DOCKER_READ_FILE_SCHEMA: EnhancedToolSchema = {
+  name: 'docker_read_file',
+  description: `🐳 讀取 Docker 容器內指定檔案的內容。
 
 🎯 **使用時機**：
 - 用戶要求查看、檢查、分析任何檔案
@@ -60,11 +62,15 @@ export const READ_FILE_SCHEMA: EnhancedToolSchema = {
 🔍 **智能檔案識別**：
 - "主頁"、"首頁" → src/app/page.tsx
 - "配置檔案" → package.json, next.config.js
-- "樣式檔案" → globals.css, tailwind.config.js`,
+- "樣式檔案" → globals.css, tailwind.config.js
+
+⚠️ **參數名稱重要提醒**：
+- 必須使用 "filePath" 作為參數名稱
+- 不是 "input"、不是 "path"、不是 "file"`,
   
   parameters: z.object({
     filePath: z.string()
-      .describe('檔案路徑（相對路徑，如：src/app/page.tsx）')
+      .describe('檔案路徑（相對路徑，如：src/app/page.tsx）- 參數名稱必須是 filePath')
       .refine(path => !path.startsWith('/'), '請使用相對路徑，不要以 / 開頭')
       .refine(path => !path.startsWith('./'), '請使用相對路徑，不要以 ./ 開頭')
   }),
@@ -81,10 +87,21 @@ export const READ_FILE_SCHEMA: EnhancedToolSchema = {
       input: { filePath: 'package.json' },
       explanation: '專案根目錄的 package.json 配置檔案',
       expectedOutput: '顯示 package.json 的內容和依賴資訊'
+    },
+    {
+      scenario: '正確的參數格式示範',
+      input: { filePath: 'src/components/Button.tsx' },
+      explanation: '注意：參數名稱是 filePath，不是 input 或其他名稱',
+      expectedOutput: '成功讀取組件檔案內容'
     }
   ],
   
   commonErrors: [
+    {
+      error: '參數名稱錯誤：使用了 "input" 而不是 "filePath"',
+      cause: 'AI調用時傳錯了參數名稱',
+      solution: '必須使用 { "filePath": "src/app/page.tsx" } 格式'
+    },
     {
       error: '使用絕對路徑',
       cause: '路徑以 / 開頭，如 /app/workspace/...',
@@ -93,7 +110,7 @@ export const READ_FILE_SCHEMA: EnhancedToolSchema = {
     {
       error: '檔案不存在',
       cause: '路徑錯誤或檔案確實不存在',
-      solution: '檢查路徑拼寫，或使用 list_directory 確認檔案位置'
+      solution: '檢查路徑拼寫，或使用 docker_ls 確認檔案位置'
     }
   ],
   
@@ -103,7 +120,159 @@ export const READ_FILE_SCHEMA: EnhancedToolSchema = {
     '找到檔案'
   ],
   
-  category: ToolCategory.FILE_OPERATIONS
+  category: ToolCategory.DOCKER_OPERATIONS
+};
+
+/**
+ * Docker 目錄列表工具 - 明確參數定義
+ * 
+ * ⚠️ 重要：參數名稱必須是 path，不是 directoryPath 或 input
+ */
+export const DOCKER_LS_SCHEMA: EnhancedToolSchema = {
+  name: 'docker_ls',
+  description: `🐳 列出 Docker 容器內目錄內容（標準 Unix ls 命令）。
+
+🎯 **使用時機**：
+- 用戶詢問"有哪些檔案"、"專案結構"
+- 需要了解目錄內容
+- 尋找特定檔案的位置
+
+📁 **常用目錄**：
+- 根目錄：'.' 或不填（預設）
+- 源碼目錄：'src'
+- 應用目錄：'src/app'
+- 組件目錄：'src/components'
+
+⚠️ **參數名稱重要提醒**：
+- 必須使用 "path" 作為參數名稱
+- 不是 "directoryPath"、不是 "input"、不是 "dir"`,
+  
+  parameters: z.object({
+    path: z.string()
+      .describe('目錄路徑（相對路徑，預設為 "." 表示當前目錄）- 參數名稱必須是 path')
+      .default('.'),
+    long: z.boolean()
+      .describe('-l, 使用長格式顯示詳細資訊')
+      .default(false)
+      .optional(),
+    all: z.boolean()
+      .describe('-a, 顯示隱藏檔案')
+      .default(false)
+      .optional()
+  }),
+  
+  examples: [
+    {
+      scenario: '查看專案根目錄',
+      input: { path: '.' },
+      explanation: '列出專案根目錄的所有檔案和資料夾',
+      expectedOutput: '顯示根目錄下的檔案列表'
+    },
+    {
+      scenario: '查看 src 目錄',
+      input: { path: 'src' },
+      explanation: '列出 src 目錄下的內容',
+      expectedOutput: '顯示 src 目錄的檔案結構'
+    },
+    {
+      scenario: '使用長格式查看',
+      input: { path: 'src/app', long: true },
+      explanation: '注意：參數名稱是 path，不是 directoryPath 或 input',
+      expectedOutput: '詳細的檔案資訊列表'
+    }
+  ],
+  
+  commonErrors: [
+    {
+      error: '參數名稱錯誤：使用了 "directoryPath" 或 "input" 而不是 "path"',
+      cause: 'AI調用時傳錯了參數名稱',
+      solution: '必須使用 { "path": "src" } 格式'
+    },
+    {
+      error: '目錄不存在',
+      cause: '指定的目錄路徑不存在',
+      solution: '檢查路徑拼寫，先從根目錄開始探索'
+    }
+  ],
+  
+  successPatterns: [
+    '成功列出目錄',
+    '找到檔案',
+    'drwxr-xr-x'
+  ],
+  
+  category: ToolCategory.DOCKER_OPERATIONS
+};
+
+/**
+ * Docker 樹狀結構工具 - 明確參數定義
+ * 
+ * ⚠️ 重要：參數名稱必須是 path，不是 directoryPath 或 input
+ */
+export const DOCKER_TREE_SCHEMA: EnhancedToolSchema = {
+  name: 'docker_tree',
+  description: `🐳 顯示 Docker 容器內目錄樹狀結構（標準 Unix tree 命令）。
+
+🎯 **使用時機**：
+- 用戶想要看到專案的整體結構
+- 需要可視化的目錄層次結構
+- 快速了解專案組織
+
+📁 **參數說明**：
+- path: 要顯示的目錄路徑（預設為當前目錄）
+- depth: 限制顯示深度，避免輸出過多內容
+
+⚠️ **參數名稱重要提醒**：
+- 必須使用 "path" 作為參數名稱
+- 不是 "directoryPath"、不是 "input"、不是 "dirPath"`,
+  
+  parameters: z.object({
+    path: z.string()
+      .describe('目錄路徑（相對路徑，預設為 "." 表示當前目錄）- 參數名稱必須是 path')
+      .default('.'),
+    depth: z.number()
+      .describe('限制顯示深度層級（1-5），避免輸出過多')
+      .min(1)
+      .max(5)
+      .default(3)
+      .optional()
+  }),
+  
+  examples: [
+    {
+      scenario: '查看專案樹狀結構',
+      input: { path: '.' },
+      explanation: '顯示當前專案的樹狀結構',
+      expectedOutput: '樹狀的專案結構圖'
+    },
+    {
+      scenario: '查看 src 目錄結構',
+      input: { path: 'src', depth: 2 },
+      explanation: '注意：參數名稱是 path，不是 directoryPath 或 input',
+      expectedOutput: '限制深度的 src 目錄樹狀結構'
+    }
+  ],
+  
+  commonErrors: [
+    {
+      error: '參數名稱錯誤：使用了 "directoryPath" 或 "input" 而不是 "path"',
+      cause: 'AI調用時傳錯了參數名稱',
+      solution: '必須使用 { "path": "src" } 格式'
+    },
+    {
+      error: 'tree 命令未找到',
+      cause: 'Docker 容器內沒有安裝 tree 命令',
+      solution: '系統會自動安裝 tree 命令，或使用 docker_ls 替代'
+    }
+  ],
+  
+  successPatterns: [
+    '成功顯示樹狀結構',
+    '目錄結構',
+    'directories, files'
+  ],
+  
+  category: ToolCategory.DOCKER_OPERATIONS
 };
 
 /**
@@ -199,13 +368,13 @@ export const LIST_DIRECTORY_SCHEMA: EnhancedToolSchema = {
       scenario: '查看專案根目錄',
       input: { directoryPath: '' },
       explanation: '空字串表示專案根目錄',
-      expectedOutput: '顯示根目錄的檔案和資料夾列表'
+      expectedOutput: '專案根目錄的檔案列表'
     },
     {
-      scenario: '查看源碼目錄',
+      scenario: '查看 src 目錄',
       input: { directoryPath: 'src' },
-      explanation: '查看 src 目錄的內容',
-      expectedOutput: '顯示 src 目錄下的檔案和子目錄'
+      explanation: '查看源碼目錄結構',
+      expectedOutput: 'src 目錄下的檔案和資料夾'
     }
   ],
   
@@ -213,196 +382,114 @@ export const LIST_DIRECTORY_SCHEMA: EnhancedToolSchema = {
     {
       error: '目錄不存在',
       cause: '指定的目錄路徑不存在',
-      solution: '檢查路徑拼寫或使用父目錄路徑'
+      solution: '檢查路徑拼寫，先從根目錄開始'
     }
   ],
   
   successPatterns: [
-    '目錄內容如下',
-    '找到以下檔案',
-    '目錄列表'
-  ],
-  
-  category: ToolCategory.FILE_OPERATIONS
-};
-
-/**
- * 專案探索工具 - 增強版
- */
-export const COMPREHENSIVE_PROJECT_EXPLORATION_SCHEMA: EnhancedToolSchema = {
-  name: 'comprehensive_project_exploration',
-  description: `執行完整的專案分析和結構探索。
-
-🎯 **使用時機**：
-- 用戶詢問專案狀態、結構、內容
-- 第一次對話需要了解專案
-- 用戶說"查看專案"、"分析專案"、"專案有什麼"
-
-🔍 **分析內容**：
-- 專案架構類型（Next.js App Router/Pages Router）
-- 依賴分析和版本資訊
-- 檔案結構和組織方式
-- 配置檔案狀態
-- 開發環境設置
-
-⚡ **自動執行**：
-- 無需參數，自動分析整個專案
-- 生成詳細的專案報告
-- 提供開發建議`,
-  
-  parameters: z.object({}), // 無參數
-  
-  examples: [
-    {
-      scenario: '用戶詢問專案狀態',
-      input: {},
-      explanation: '無需參數，自動分析整個專案',
-      expectedOutput: '完整的專案分析報告，包含架構、依賴、檔案結構等'
-    }
-  ],
-  
-  commonErrors: [
-    {
-      error: '專案未初始化',
-      cause: '目錄中沒有找到專案檔案',
-      solution: '檢查是否在正確的專案目錄中'
-    }
-  ],
-  
-  successPatterns: [
-    '專案探索完成',
-    '分析結果如下',
-    '專案架構報告'
-  ],
-  
-  category: ToolCategory.PROJECT_MANAGEMENT
-};
-
-/**
- * Diff 工具 - 增強版
- */
-export const LOCAL_APPLY_DIFF_SCHEMA: EnhancedToolSchema = {
-  name: 'local_apply_diff',
-  description: `使用 unified diff 格式精確修改檔案內容。
-
-🎯 **使用時機**：
-- 需要精確修改檔案的特定部分
-- 複雜的程式碼變更
-- 保留原有內容，只修改特定行
-
-📝 **Diff 格式要求**：
-- 使用標準 unified diff 格式
-- 包含上下文行（@@ -old,count +new,count @@）
-- 明確標示新增（+）和刪除（-）的行
-
-✨ **優勢**：
-- 比完全覆蓋更安全
-- 可以精確控制修改範圍
-- 支援複雜的程式碼重構`,
-  
-  parameters: z.object({
-    filePath: z.string()
-      .describe('要修改的檔案路徑（相對路徑）'),
-    diffContent: z.string()
-      .describe('unified diff 格式的修改內容')
-      .refine(content => content.includes('@@'), 'diff 內容必須包含 @@ 標記')
-  }),
-  
-  examples: [
-    {
-      scenario: '在主頁添加標題',
-      input: {
-        filePath: 'src/app/page.tsx',
-        diffContent: `@@ -8,6 +8,7 @@
-     <div className="grid grid-rows-[20px_1fr_20px]...">
-       <main className="flex flex-col gap-[32px]...">
-+        <h1 className="text-2xl font-bold">AI網頁編輯測試</h1>
-         <Image
-           className="dark:invert"`
-      },
-      explanation: '使用 diff 格式在指定位置添加 h1 標題',
-      expectedOutput: 'Diff 應用成功，檔案已修改'
-    }
-  ],
-  
-  commonErrors: [
-    {
-      error: 'Diff 格式錯誤',
-      cause: '缺少 @@ 標記或格式不正確',
-      solution: '確保使用標準 unified diff 格式'
-    },
-    {
-      error: '上下文不匹配',
-      cause: 'Diff 中的上下文與檔案實際內容不符',
-      solution: '先讀取檔案確認當前內容，然後生成正確的 diff'
-    }
-  ],
-  
-  successPatterns: [
-    'Diff 應用成功',
-    '檔案修改完成',
-    '變更已生效'
+    '成功列出目錄',
+    '找到檔案',
+    '目錄內容'
   ],
   
   category: ToolCategory.FILE_OPERATIONS
 };
 
 // === 工具 Schema 註冊表 ===
-export const ENHANCED_TOOL_SCHEMAS = {
+export const ENHANCED_TOOL_SCHEMAS: Record<string, EnhancedToolSchema> = {
+  docker_read_file: DOCKER_READ_FILE_SCHEMA,
+  docker_ls: DOCKER_LS_SCHEMA,
+  docker_tree: DOCKER_TREE_SCHEMA,
   read_file: READ_FILE_SCHEMA,
   create_file: CREATE_FILE_SCHEMA,
-  list_directory: LIST_DIRECTORY_SCHEMA,
-  comprehensive_project_exploration: COMPREHENSIVE_PROJECT_EXPLORATION_SCHEMA,
-  local_apply_diff: LOCAL_APPLY_DIFF_SCHEMA
-} as const;
+  list_directory: LIST_DIRECTORY_SCHEMA
+};
 
-/**
- * 根據工具名稱獲取增強的 Schema
- */
+// === 工具描述生成器 ===
 export function getEnhancedToolSchema(toolName: string): EnhancedToolSchema | null {
-  return ENHANCED_TOOL_SCHEMAS[toolName as keyof typeof ENHANCED_TOOL_SCHEMAS] || null;
+  return ENHANCED_TOOL_SCHEMAS[toolName] || null;
 }
 
-/**
- * 生成工具的詳細說明文字（用於 prompt）
- */
 export function generateToolDescription(toolName: string): string {
   const schema = getEnhancedToolSchema(toolName);
-  if (!schema) return '';
+  if (!schema) {
+    return `工具 ${toolName} 的描述不可用`;
+  }
 
-  let description = `**${schema.name}**: ${schema.description}\n\n`;
-  
-  // 添加示例
-  if (schema.examples.length > 0) {
-    description += '📚 **使用範例**:\n';
-    schema.examples.forEach(example => {
-      description += `- ${example.scenario}: ${JSON.stringify(example.input)}\n`;
-    });
-    description += '\n';
-  }
-  
-  // 添加常見錯誤
-  if (schema.commonErrors.length > 0) {
-    description += '⚠️ **避免錯誤**:\n';
-    schema.commonErrors.forEach(error => {
-      description += `- ${error.error}: ${error.solution}\n`;
-    });
-    description += '\n';
-  }
-  
-  return description;
+  return `
+## ${schema.name}
+
+${schema.description}
+
+### 使用範例：
+${schema.examples.map(example => `
+**${example.scenario}**
+輸入: \`${JSON.stringify(example.input)}\`
+說明: ${example.explanation}
+`).join('\n')}
+
+### 常見錯誤：
+${schema.commonErrors.map(error => `
+- **${error.error}**: ${error.cause}
+  解決方案: ${error.solution}
+`).join('\n')}
+  `;
 }
 
-/**
- * 生成所有工具的綜合說明（用於系統 prompt）
- */
 export function generateAllToolsDescription(): string {
-  let description = '# 🛠️ 可用工具詳細說明\n\n';
-  
-  Object.values(ENHANCED_TOOL_SCHEMAS).forEach(schema => {
-    description += generateToolDescription(schema.name);
-    description += '---\n\n';
-  });
-  
-  return description;
+  return `
+# 🛠️ 工具使用指南
+
+${Object.values(ENHANCED_TOOL_SCHEMAS).map(schema => generateToolDescription(schema.name)).join('\n\n---\n\n')}
+
+## 🎯 重要提醒
+
+1. **參數名稱必須正確**：
+   - docker_read_file: 使用 "filePath"，不是 "input"
+   - docker_ls: 使用 "path"，不是 "directoryPath" 或 "input"
+   - docker_tree: 使用 "path"，不是 "directoryPath" 或 "input"
+
+2. **路徑格式規範**：
+   - 使用相對路徑：src/app/page.tsx
+   - 避免絕對路徑：/app/workspace/...
+   - 避免 ./ 開頭：./src/app/page.tsx
+
+3. **工具選擇建議**：
+   - 查看檔案內容：使用 docker_read_file
+   - 列出目錄內容：使用 docker_ls（推薦）或 list_directory
+   - 查看專案結構：使用 docker_tree
+
+4. **錯誤處理**：
+   - 如果工具執行失敗，檢查參數名稱是否正確
+   - 確認路徑格式符合規範
+   - 必要時使用其他工具確認檔案或目錄存在
+  `;
+}
+
+// === 智能工具建議器 ===
+export function suggestToolForRequest(userMessage: string): { toolName: string; reasoning: string } | null {
+  const message = userMessage.toLowerCase();
+
+  if (message.includes('讀取') || message.includes('查看') || message.includes('看看') || message.includes('read')) {
+    return {
+      toolName: 'docker_read_file',
+      reasoning: '用戶想要讀取檔案內容，建議使用 docker_read_file，參數名稱是 filePath'
+    };
+  }
+
+  if (message.includes('列出') || message.includes('有哪些') || message.includes('檔案') || message.includes('list')) {
+    return {
+      toolName: 'docker_ls',
+      reasoning: '用戶想要列出目錄內容，建議使用 docker_ls，參數名稱是 path'
+    };
+  }
+
+  if (message.includes('結構') || message.includes('樹狀') || message.includes('tree') || message.includes('專案結構')) {
+    return {
+      toolName: 'docker_tree',
+      reasoning: '用戶想要查看專案結構，建議使用 docker_tree，參數名稱是 path'
+    };
+  }
+
+  return null;
 } 
