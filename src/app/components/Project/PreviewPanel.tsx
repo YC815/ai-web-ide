@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 // 設備預設配置
 const DEVICE_PRESETS = {
@@ -33,6 +33,9 @@ export function PreviewPanel({ containerId, projectStatus }: PreviewPanelProps) 
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [devServerStatus, setDevServerStatus] = useState<'running' | 'stopped' | 'starting' | 'error'>('stopped');
   const [showIframe, setShowIframe] = useState(false);
+  const [logs, setLogs] = useState<string[]>([]);
+  const [showLogs, setShowLogs] = useState(false);
+  const logsEndRef = useRef<HTMLDivElement>(null);
 
   // 檢查開發服務器狀態並獲取正確的 URL（智能化版本）
   const checkDevServerStatus = useCallback(async () => {
@@ -92,6 +95,17 @@ export function PreviewPanel({ containerId, projectStatus }: PreviewPanelProps) 
     try {
       setIsLoading(true);
       setDevServerStatus('starting');
+      setShowLogs(false); // 預設不顯示日誌
+      setLogs([]);
+      
+      // 添加啟動日誌（但不立即顯示）
+      const addLog = (message: string) => {
+        const timestamp = new Date().toLocaleTimeString();
+        setLogs(prev => [...prev, `[${timestamp}] ${message}`]);
+      };
+
+      addLog('Starting development server...');
+      addLog('Detecting project type...');
       
       const response = await fetch('/api/docker-dev-server', {
         method: 'POST',
@@ -105,12 +119,16 @@ export function PreviewPanel({ containerId, projectStatus }: PreviewPanelProps) 
       const data = await response.json();
       
       if (data.success) {
+        addLog('✅ Development server started successfully');
+        addLog(`Port: ${data.port || 3000}`);
         setDevServerStatus('running');
         
         // 使用智能狀態管理器重新檢查狀態
         try {
           const { getSmartDockerStatusManager } = await import('@/lib/docker/smart-status-manager');
           const manager = getSmartDockerStatusManager();
+          
+          addLog('Checking container status...');
           
           // 強制刷新狀態
           const status = await manager.getContainerStatus(containerId, true);
@@ -119,26 +137,56 @@ export function PreviewPanel({ containerId, projectStatus }: PreviewPanelProps) 
             const mapping = status.portMappings.find(m => m.containerPort === (data.port || 3000));
             if (mapping) {
               setPreviewUrl(`http://localhost:${mapping.hostPort}`);
+              addLog(`Preview URL: http://localhost:${mapping.hostPort}`);
             } else {
               setPreviewUrl(`http://localhost:${data.port || 3000}`);
+              addLog(`Preview URL: http://localhost:${data.port || 3000}`);
             }
           } else {
             setPreviewUrl(`http://localhost:${data.port || 3000}`);
+            addLog(`Preview URL: http://localhost:${data.port || 3000}`);
           }
-        } catch (error) {
+        } catch {
           setPreviewUrl(`http://localhost:${data.port || 3000}`);
+          addLog(`Preview URL: http://localhost:${data.port || 3000}`);
         }
         
+        addLog('Server ready, loading preview...');
         setShowIframe(true);
         setErrors([]);
+        // 成功時不顯示日誌，直接進入預覽模式
+        
       } else {
+        // 失敗時才顯示日誌，顯示原始錯誤信息
+        addLog(`❌ Failed: ${data.error || 'Unknown error'}`);
+        if (data.details) {
+          addLog(`Details: ${JSON.stringify(data.details, null, 2)}`);
+        }
+        if (data.logs && Array.isArray(data.logs)) {
+          data.logs.forEach((log: string) => addLog(log));
+        }
+        addLog('Diagnosis:');
+        addLog('  - Check if container is running');
+        addLog('  - Check if project directory exists');
+        addLog('  - Check if package.json is configured correctly');
         setDevServerStatus('error');
         setErrors([data.error || '啟動開發服務器失敗']);
+        setShowLogs(true); // 錯誤時顯示日誌
       }
     } catch (error) {
       console.error('啟動開發服務器失敗:', error);
+      const addLog = (message: string) => {
+        const timestamp = new Date().toLocaleTimeString();
+        setLogs(prev => [...prev, `[${timestamp}] ${message}`]);
+      };
+      addLog(`❌ Connection failed: ${error instanceof Error ? error.message : 'Unable to connect to server'}`);
+      addLog('Possible causes:');
+      addLog('  - Network connection issues');
+      addLog('  - API service not started');
+      addLog('  - Container service error');
       setDevServerStatus('error');
       setErrors(['無法連接到服務器']);
+      setShowLogs(true); // 錯誤時顯示日誌
     } finally {
       setIsLoading(false);
     }
@@ -188,6 +236,16 @@ export function PreviewPanel({ containerId, projectStatus }: PreviewPanelProps) 
     }
   };
 
+  // 自動滾動到日誌底部
+  useEffect(() => {
+    if (logsEndRef.current && showLogs) {
+      // 使用 setTimeout 確保 DOM 更新後再滾動
+      setTimeout(() => {
+        logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
+    }
+  }, [logs, showLogs]);
+
   // 初始化檢查（只在專案狀態變化時觸發，避免頻繁檢查）
   useEffect(() => {
     if (containerId && projectStatus === 'running') {
@@ -209,8 +267,8 @@ export function PreviewPanel({ containerId, projectStatus }: PreviewPanelProps) 
           
           {/* 環境模式指示器 */}
           <div className="flex items-center gap-2">
-            <span className={`px-3 py-1 rounded-full text-white text-sm ${ENV_MODES[envMode].color}`}>
-              {ENV_MODES[envMode].icon} {ENV_MODES[envMode].label}
+            <span className={`px-3 py-1 rounded-full text-white text-sm ${ENV_MODES.development.color}`}>
+              {ENV_MODES.development.icon} {ENV_MODES.development.label}
             </span>
           </div>
         </div>
@@ -404,12 +462,22 @@ export function PreviewPanel({ containerId, projectStatus }: PreviewPanelProps) 
                     <p className="text-sm mb-4">
                       開發服務器無法正常運行
                     </p>
-                    <button
-                      onClick={startDevServer}
-                      className="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded text-sm transition-colors"
-                    >
-                      重新啟動服務器
-                    </button>
+                    <div className="flex flex-col gap-2">
+                      <button
+                        onClick={startDevServer}
+                        className="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded text-sm transition-colors"
+                      >
+                        重新啟動服務器
+                      </button>
+                      {logs.length > 0 && !showLogs && (
+                        <button
+                          onClick={() => setShowLogs(true)}
+                          className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded text-sm transition-colors"
+                        >
+                          顯示診斷日誌
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               ) : (
@@ -428,16 +496,70 @@ export function PreviewPanel({ containerId, projectStatus }: PreviewPanelProps) 
                     >
                       啟動預覽服務器
                     </button>
+                    
+                    {/* 動態顯示內容 */}
                     <div className="mt-4 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg text-left">
-                      <h4 className="font-medium text-blue-700 dark:text-blue-300 mb-2">
-                        🎯 預覽功能特色:
-                      </h4>
-                      <ul className="text-sm space-y-1 text-blue-600 dark:text-blue-400">
-                        <li>• 📱 多設備響應式預覽</li>
-                        <li>• 🔄 實時熱重載</li>
-                        <li>• ⚙️ 環境模式切換</li>
-                        <li>• 🔍 自動錯誤檢測</li>
-                      </ul>
+                      {showLogs && logs.length > 0 ? (
+                        <>
+                          <div className="flex items-center justify-between mb-2">
+                            <h4 className="font-medium text-red-700 dark:text-red-300">
+                              🔍 診斷日誌:
+                            </h4>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => setLogs([])}
+                                className="text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-200 text-sm"
+                              >
+                                清除日誌
+                              </button>
+                              <button
+                                onClick={() => setShowLogs(false)}
+                                className="text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-200 text-sm"
+                              >
+                                隱藏日誌
+                              </button>
+                            </div>
+                          </div>
+                          <div className="bg-gray-900 text-red-400 p-3 rounded font-mono text-xs max-h-48 overflow-y-scroll border border-red-500 scrollbar-thin scrollbar-thumb-red-500 scrollbar-track-gray-800">
+                            {logs.map((log, index) => (
+                              <div key={index} className={`mb-1 whitespace-pre-wrap break-words ${
+                                log.includes('❌') ? 'text-red-300' :
+                                log.includes('✅') ? 'text-green-300' :
+                                log.includes('Diagnosis') || log.includes('Possible') ? 'text-yellow-300' :
+                                'text-gray-300'
+                              }`}>
+                                {log}
+                              </div>
+                            ))}
+                            <div ref={logsEndRef} />
+                          </div>
+                          <div className="mt-3 p-2 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700 rounded text-sm">
+                            <div className="flex items-start gap-2">
+                              <span className="text-yellow-600 dark:text-yellow-400">💡</span>
+                              <div>
+                                <strong className="text-yellow-700 dark:text-yellow-300">故障排除建議:</strong>
+                                <ul className="mt-1 text-yellow-600 dark:text-yellow-400 text-xs space-y-1">
+                                  <li>• 確認 Docker 容器正在運行</li>
+                                  <li>• 檢查專案是否包含 package.json</li>
+                                  <li>• 驗證網路連接是否正常</li>
+                                </ul>
+                              </div>
+                            </div>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <h4 className="font-medium text-blue-700 dark:text-blue-300 mb-2">
+                            🎯 預覽功能特色:
+                          </h4>
+                          <ul className="text-sm space-y-1 text-blue-600 dark:text-blue-400">
+                            <li>• 📱 多設備響應式預覽</li>
+                            <li>• 🔄 實時熱重載</li>
+                            <li>• ⚙️ 環境模式切換</li>
+                            <li>• 🔍 自動錯誤檢測</li>
+                          </ul>
+                        </>
+                      )}
                     </div>
                   </div>
                 </div>

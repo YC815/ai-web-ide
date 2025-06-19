@@ -77,10 +77,7 @@ const execCommandWithLogs = (command: string, args: string[], onLog?: (log: stri
   });
 };
 
-// 長時間執行命令的輔助函數（用於 Next.js 初始化）
-const execLongCommand = (command: string, args: string[]): Promise<string> => {
-  return execCommand(command, args, 300000); // 5 分鐘超時
-};
+
 
 // 獲取 AI Web IDE 專案容器列表
 const getAIWebIDEContainers = async () => {
@@ -168,7 +165,7 @@ const getAIWebIDEContainers = async () => {
 const createProjectContainer = async (
   projectName: string, 
   description: string, 
-  installTree: boolean, // 新增參數
+  installTree: boolean = true, // 默認安裝 tree 等常用工具
   onLog?: (log: string) => void
 ) => {
   // 生成容器名稱
@@ -216,9 +213,9 @@ const createProjectContainer = async (
       'apk add --no-cache curl bash git'
     ], onLog);
     
-    // 根據參數決定是否安裝 tree 等常用工具
+    // 安裝常用開發工具（默認包含 tree）
     if (installTree) {
-      if (onLog) onLog(`📋 安裝常用工具 (tree, wget, nano, vim)...`);
+      if (onLog) onLog(`📋 安裝常用開發工具 (tree, wget, nano, vim, htop)...`);
       await execCommandWithLogs('docker', [
         'exec', containerName,
         'sh', '-c', 
