@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Dependency Graph</title>
+    <script src="https://unpkg.com/cytoscape@3.21.1/dist/cytoscape.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        width: 100%;
+      }
+
+      #cy {
+        height: calc(100vh - 4rem);
+        width: 100%;
+      }
+    </style>
+  </head>
+  <body class="bg-gray-100 text-gray-800">
+    <header
+      class="h-16 flex items-center justify-between px-6 bg-blue-600 text-white shadow"
+    >
+      <h1 class="text-lg font-bold">📦 Dependency Graph Viewer</h1>
+      <span class="text-sm"
+        >Loaded from <code>pj-deps/cytoscape-elements.json</code></span
+      >
+    </header>
+
+    <div id="cy"></div>
+
+    <script>
+      fetch("cytoscape-elements.json")
+        .then((res) => res.json())
+        .then((elements) => {
+          const cy = cytoscape({
+            container: document.getElementById("cy"),
+            elements,
+            layout: { name: "cose", animate: true },
+            style: [
+              {
+                selector: "node",
+                style: {
+                  label: "data(id)",
+                  "background-color": "#2563eb", // Tailwind blue-600
+                  color: "#fff",
+                  "text-valign": "center",
+                  "text-halign": "center",
+                  "text-wrap": "wrap",
+                  "font-size": "10px",
+                  width: "label",
+                  height: "label",
+                  padding: "6px",
+                  "border-radius": "6px",
+                },
+              },
+              {
+                selector: "edge",
+                style: {
+                  width: 2,
+                  "line-color": "#94a3b8", // Tailwind slate-400
+                  "curve-style": "bezier",
+                  "target-arrow-shape": "triangle",
+                  "target-arrow-color": "#94a3b8",
+                },
+              },
+              {
+                selector: "node:hover",
+                style: {
+                  "background-color": "#1e40af", // blue-800
+                  "font-weight": "bold",
+                },
+              },
+            ],
+          });
+        })
+        .catch((err) => {
+          alert("載入圖形資料失敗！");
+          console.error(err);
+        });
+    </script>
+  </body>
+</html>
