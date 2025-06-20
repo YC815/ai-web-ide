@@ -758,10 +758,19 @@ export class DockerFileSystemTool {
     try {
       const { recursive = false, showHidden = false, useTree = false } = options || {};
       
-      // 強制限制在 workspace 內
+      // 修復路徑處理：確保在正確的工作目錄下執行
+      const baseDir = this.dockerContext.workingDirectory || '/app';
       let safeDirPath = this.sanitizePath(dirPath);
-      if (!safeDirPath.startsWith('./app/workspace') && !safeDirPath.startsWith('/app/workspace')) {
-        safeDirPath = `/app/workspace/${safeDirPath.replace(/^\.?\/?/, '')}`;
+      
+      // 如果提供的路徑是相對路徑，則在基礎目錄下執行命令，但保持相對路徑
+      // 不直接拼接路徑，而是通過 cd 命令切換目錄
+      if (!safeDirPath.startsWith('/')) {
+        // 保持相對路徑，稍後通過 cd 命令處理
+      } else {
+        // 如果是絕對路徑，檢查是否在安全範圍內
+        if (!safeDirPath.startsWith('/app')) {
+          safeDirPath = '/app' + safeDirPath;
+        }
       }
       
       // 簡化的安全驗證
@@ -781,10 +790,10 @@ export class DockerFileSystemTool {
         if (showHidden) treeArgs.push('-a');
         
         command = ['bash', '-c', 
-          `cd "${safeDirPath}" && (` +
-          `tree ${treeArgs.join(' ')} | head -200 || ` + // 限制最多200行輸出
-          `(command -v apt-get >/dev/null 2>&1 && apt-get update && apt-get install -y tree && tree ${treeArgs.join(' ')} | head -200) || ` +
-          `(command -v apk >/dev/null 2>&1 && apk add --no-cache tree && tree ${treeArgs.join(' ')} | head -200) || ` +
+          `cd "${baseDir}" && (` +
+          `tree ${treeArgs.join(' ')} "${safeDirPath}" | head -200 || ` + // 限制最多200行輸出
+          `(command -v apt-get >/dev/null 2>&1 && apt-get update && apt-get install -y tree && tree ${treeArgs.join(' ')} "${safeDirPath}" | head -200) || ` +
+          `(command -v apk >/dev/null 2>&1 && apk add --no-cache tree && tree ${treeArgs.join(' ')} "${safeDirPath}" | head -200) || ` +
           `echo "無法安裝 tree 命令，請使用標準 ls 列出"` +
           `)`
         ];
@@ -792,19 +801,13 @@ export class DockerFileSystemTool {
         // 使用ls命令，排除node_modules
         if (recursive) {
           // 遞迴列出，明確排除node_modules等大型目錄
-          command = ['find', safeDirPath, '-maxdepth', '3', 
-                    '-name', 'node_modules', '-prune', '-o',
-                    '-name', '.next', '-prune', '-o',
-                    '-name', '.git', '-prune', '-o',
-                    '-name', 'dist', '-prune', '-o',
-                    '-name', 'build', '-prune', '-o',
-                    '-print', '|', 'head', '-100']; // 限制最多100行
+          command = ['bash', '-c', `cd "${baseDir}" && find "${safeDirPath}" -maxdepth 3 -name node_modules -prune -o -name .next -prune -o -name .git -prune -o -name dist -prune -o -name build -prune -o -print | head -100`];
         } else {
           // 非遞迴列出
           if (showHidden) {
-            command = ['bash', '-c', `ls -la "${safeDirPath}" | grep -v node_modules | head -50`];
+            command = ['bash', '-c', `cd "${baseDir}" && ls -la "${safeDirPath}" | grep -v node_modules | head -50`];
           } else {
-            command = ['bash', '-c', `ls -l "${safeDirPath}" | grep -v node_modules | head -50`];
+            command = ['bash', '-c', `cd "${baseDir}" && ls -l "${safeDirPath}" | grep -v node_modules | head -50`];
           }
         }
       }
@@ -918,11 +921,9 @@ export class DockerFileSystemTool {
    * 使用tree命令顯示Docker容器內目錄樹狀結構 - 限制workspace，排除node_modules
    */
   async showDirectoryTree(dirPath: string = '.', maxDepth?: number): Promise<DockerToolResponse<string>> {
-    // 強制限制在 workspace 內
+    // 修復路徑處理
+    const baseDir = this.dockerContext.workingDirectory || '/app';
     let sanitizedPath = this.sanitizePath(dirPath);
-    if (!sanitizedPath.startsWith('./app/workspace') && !sanitizedPath.startsWith('/app/workspace')) {
-      sanitizedPath = `/app/workspace/${sanitizedPath.replace(/^\.?\/?/, '')}`;
-    }
     
     if (!this.isValidDirectoryPath(sanitizedPath)) {
       return { success: false, error: '不安全的目錄路徑' };
@@ -932,7 +933,7 @@ export class DockerFileSystemTool {
     const safeMaxDepth = maxDepth && maxDepth > 0 && maxDepth <= 4 ? maxDepth : 3;
     const excludePattern = 'node_modules|.next|.git|dist|build|coverage|.nyc_output';
     
-    const command = `cd "${sanitizedPath}" && tree -L ${safeMaxDepth} -I "${excludePattern}" -F --dirsfirst | head -100`;
+    const command = `cd "${baseDir}" && tree -L ${safeMaxDepth} -I "${excludePattern}" -F --dirsfirst "${sanitizedPath}" | head -100`;
 
     let result = await this.executeInContainer(['bash', '-c', command]);
 
@@ -944,13 +945,14 @@ export class DockerFileSystemTool {
       const installResult = await this.executeInContainer([
         'bash', 
         '-c', 
-        'apk add --no-cache tree || apt-get update && apt-get install -y tree || yum install -y tree'
+        '(command -v apk >/dev/null 2>&1 && apk add --no-cache tree) || (command -v apt-get >/dev/null 2>&1 && apt-get update && apt-get install -y tree) || (command -v yum >/dev/null 2>&1 && yum install -y tree) || echo "無法安裝tree命令"'
       ]);
 
       if (installResult.success) {
         console.log('tree 安裝成功，重試命令...');
         // 再次執行 tree 命令
-        result = await this.executeInContainer(['bash', '-c', command]);
+        const newCommand = `cd "${baseDir}" && tree -L ${safeMaxDepth} -I "${excludePattern}" -F --dirsfirst "${sanitizedPath}" | head -100`;
+        result = await this.executeInContainer(['bash', '-c', newCommand]);
       } else {
         result.error += ` | 自動安裝 tree 失敗: ${installResult.error}`;
       }
@@ -965,7 +967,7 @@ export class DockerFileSystemTool {
       if (findResult.success && findResult.containerOutput) {
         return {
           success: true,
-          data: `🌳 workspace目錄結構 (使用find替代):\n${findResult.containerOutput}`,
+          data: `🌳 ${sanitizedPath} 目錄結構 (使用find替代):\n${findResult.containerOutput}`,
           message: '使用 find 替代 tree 成功 - 已排除node_modules等大型目錄'
         };
       }
@@ -980,9 +982,9 @@ export class DockerFileSystemTool {
     
     return {
       success: result.success,
-      data: result.success ? `🌳 workspace目錄結構:\n${outputData}` : outputData,
+      data: result.success ? `🌳 ${sanitizedPath} 目錄結構:\n${outputData}` : outputData,
       error: result.error,
-      message: result.success ? 'workspace目錄樹狀結構已生成 (已排除node_modules等)' : undefined
+      message: result.success ? `${sanitizedPath} 目錄樹狀結構已生成 (已排除node_modules等)` : undefined
     };
   }
 

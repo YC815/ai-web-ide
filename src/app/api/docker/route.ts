@@ -199,120 +199,74 @@ async function handleExecCommand(
     return NextResponse.json({
       success: true,
       stdout: stdout.trim(),
-      stderr: stderr.trim()
+      stderr: stderr.trim(),
     });
-  } catch (error: unknown) {
-    console.error('Docker exec error:', error);
-    
-    // 檢查是否為 maxBuffer 錯誤
-    if (error instanceof Error && error.message && error.message.includes('maxBuffer')) {
-      const execError = error as Error & { stdout?: string; stderr?: string };
-      return NextResponse.json({
-        success: false,
-        stdout: execError.stdout || '',
-        stderr: execError.stderr || '',
-        error: '輸出內容過大，請嘗試使用更具體的路徑或減少遞迴深度。建議使用 tree 命令或指定具體目錄。'
-      });
-    }
 
-    const execError = error as Error & { stdout?: string; stderr?: string };
-    return NextResponse.json({
-      success: false,
-      stdout: execError.stdout || '',
-      stderr: execError.stderr || '',
-      error: execError.message || 'Unknown error'
-    });
+  } catch (error) {
+    console.error(`執行Docker命令失敗:`, error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    
+    return NextResponse.json(
+      { 
+        success: false, 
+        error: `Docker exec failed: ${errorMessage}`,
+        stderr: errorMessage 
+      },
+      { status: 500 }
+    );
   }
 }
 
 /**
- * 處理可能產生大量輸出的命令
+ * 處理可能產生大量輸出的命令，使用 spawn
  */
 async function handleLargeOutputCommand(dockerCmd: string[]): Promise<NextResponse> {
   return new Promise((resolve) => {
-    const child = spawn(dockerCmd[0], dockerCmd.slice(1), {
-      stdio: ['pipe', 'pipe', 'pipe']
+    const process = spawn(dockerCmd[0], dockerCmd.slice(1), {
+      timeout: 30000, // 30秒超時
     });
 
     let stdout = '';
     let stderr = '';
-    let isTimeout = false;
-    let isBufferExceeded = false;
-    const maxOutputSize = 5 * 1024 * 1024; // 5MB 限制
+    const MAX_OUTPUT_SIZE = 10 * 1024 * 1024; // 10MB
 
-    // 設置超時
-    const timeout = setTimeout(() => {
-      isTimeout = true;
-      child.kill('SIGTERM');
-    }, 30000); // 30秒
-
-    child.stdout.on('data', (data) => {
-      const chunk = data.toString();
-      if (stdout.length + chunk.length > maxOutputSize) {
-        isBufferExceeded = true;
-        child.kill('SIGTERM');
-        return;
-      }
-      stdout += chunk;
-    });
-
-    child.stderr.on('data', (data) => {
-      const chunk = data.toString();
-      if (stderr.length + chunk.length > maxOutputSize) {
-        isBufferExceeded = true;
-        child.kill('SIGTERM');
-        return;
-      }
-      stderr += chunk;
-    });
-
-    child.on('close', (code) => {
-      clearTimeout(timeout);
-      
-      if (isTimeout) {
-        resolve(NextResponse.json({
-          success: false,
-          stdout: stdout.trim(),
-          stderr: stderr.trim(),
-          error: '命令執行超時（30秒）。建議使用更具體的路徑或較小的目錄範圍。'
-        }));
-        return;
-      }
-
-      if (isBufferExceeded) {
-        resolve(NextResponse.json({
-          success: false,
-          stdout: stdout.trim() + '\n[輸出被截斷 - 內容過大]',
-          stderr: stderr.trim(),
-          error: '輸出內容過大已被截斷。建議使用 tree 命令限制深度，或指定更具體的目錄路徑。'
-        }));
-        return;
-      }
-
-      if (code === 0) {
-        resolve(NextResponse.json({
-          success: true,
-          stdout: stdout.trim(),
-          stderr: stderr.trim()
-        }));
+    process.stdout.on('data', (data) => {
+      if (Buffer.byteLength(stdout) + data.length > MAX_OUTPUT_SIZE) {
+        // 截斷輸出
+        const remainingSize = MAX_OUTPUT_SIZE - Buffer.byteLength(stdout);
+        stdout += data.toString('utf8', 0, remainingSize);
+        process.kill();
       } else {
-        resolve(NextResponse.json({
-          success: false,
-          stdout: stdout.trim(),
-          stderr: stderr.trim(),
-          error: `命令執行失敗，退出代碼: ${code}`
-        }));
+        stdout += data.toString();
       }
     });
 
-    child.on('error', (error) => {
-      clearTimeout(timeout);
+    process.stderr.on('data', (data) => {
+      if (Buffer.byteLength(stderr) + data.length > MAX_OUTPUT_SIZE) {
+        const remainingSize = MAX_OUTPUT_SIZE - Buffer.byteLength(stderr);
+        stderr += data.toString('utf8', 0, remainingSize);
+        process.kill();
+      } else {
+        stderr += data.toString();
+      }
+    });
+
+    process.on('close', (code) => {
       resolve(NextResponse.json({
-        success: false,
+        success: code === 0,
         stdout: stdout.trim(),
         stderr: stderr.trim(),
-        error: `命令執行錯誤: ${error.message}`
+        error: code !== 0 ? `Command exited with code ${code}` : undefined,
       }));
+    });
+
+    process.on('error', (err) => {
+      console.error('Spawn process error:', err);
+      resolve(NextResponse.json({
+        success: false,
+        error: `Docker exec spawn failed: ${err.message}`,
+        stderr: err.message,
+      }, { status: 500 }));
     });
   });
 }
@@ -368,7 +322,7 @@ async function handleHealthCheck(containerRef: string) {
           output: `Container health: ${healthStatus}`
         });
       }
-    } catch (_healthError) {
+    } catch {
       // 如果沒有配置健康檢查，則認為容器健康（因為它在運行）
     }
 
@@ -380,7 +334,7 @@ async function handleHealthCheck(containerRef: string) {
         health: 'healthy',
         output: 'Container is running and responsive'
       });
-    } catch (_execError) {
+    } catch {
       return NextResponse.json({
         success: false,
         health: 'unhealthy',
