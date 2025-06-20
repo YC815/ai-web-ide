@@ -340,19 +340,8 @@ export class DockerAIEditorManager {
         case 'docker_write_file':
           const writeParams = parameters as DockerAIToolParameters['docker_write_file'];
           this.logAction(`執行工具: ${toolName}`, { filePath: writeParams.filePath });
-          const writeResult = await this.dockerToolkit.fileSystem.writeFile(
-            writeParams.filePath,
-            writeParams.content
-          );
-          return {
-            success: writeResult.success,
-            data: writeResult.success ? {
-              message: writeResult.message || '檔案寫入完成',
-              containerOutput: writeResult.containerOutput
-            } : undefined,
-            message: writeResult.message,
-            error: writeResult.error
-          } as unknown as DockerAIToolResponse<T>;
+          const writeResult = await this.handleWriteFile(writeParams);
+          return writeResult;
         
         case 'docker_list_directory':
           const listParams = parameters as DockerAIToolParameters['docker_list_directory'];
@@ -657,17 +646,60 @@ export class DockerAIEditorManager {
   }
 
   private async handleWriteFile(params: DockerAIToolParameters['docker_write_file']): Promise<DockerAIToolResponse<'docker_write_file'>> {
-    const result = await this.dockerToolkit.fileSystem.writeFile(params.filePath, params.content);
-    return {
-      success: result.success,
-      data: result.success ? {
-        message: result.message || '檔案寫入完成',
+    const isValid = await this.isDockerContextValid();
+    if (!isValid) {
+      this.logger.warn('Docker context invalid, using simulation mode for write file', { 
+        filePath: params.filePath,
+        dockerContext: this.config.dockerContext 
+      });
+      return this.createMockResponse('docker_write_file', `模擬模式：無法寫入檔案 ${params.filePath}，Docker 上下文無效`);
+    }
+
+    try {
+      this.logger.debug('Attempting to write file via Docker toolkit', { 
+        filePath: params.filePath,
+        contentLength: params.content.length,
+        dockerContext: this.config.dockerContext
+      });
+      
+      const result = await this.dockerToolkit.fileSystem.writeFile(params.filePath, params.content);
+      
+      // 詳細記錄工具結果
+      this.logger.debug('Docker file write result', { 
+        success: result.success,
+        error: result.error,
+        message: result.message,
+        containerOutput: result.containerOutput,
+        workingDirectory: this.config.dockerContext.workingDirectory
+      });
+      
+      this.logger.logToolResult(result, Date.now());
+      
+      return {
+        success: result.success,
+        data: result.success ? {
+          message: result.message || '檔案寫入完成',
+          containerOutput: result.containerOutput
+        } : undefined,
+        error: result.error,
+        message: result.message || (result.success ? `成功寫入檔案: ${params.filePath}` : `檔案寫入失敗: ${params.filePath}`),
         containerOutput: result.containerOutput
-      } : undefined,
-      error: result.error,
-      message: result.message,
-      containerOutput: result.containerOutput
-    };
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to write file - exception thrown', error instanceof Error ? error : new Error(errorMessage), { 
+        filePath: params.filePath,
+        dockerContext: this.config.dockerContext
+      });
+      
+      return {
+        success: false,
+        data: undefined,
+        error: `寫入檔案時發生例外: ${errorMessage}`,
+        message: `寫入檔案 ${params.filePath} 時發生錯誤`,
+        containerOutput: undefined
+      };
+    }
   }
 
   private async handleSmartMonitorAndRecover(): Promise<DockerAIToolResponse<'docker_smart_monitor_and_recover'>> {
@@ -1168,12 +1200,27 @@ export function createDockerAIEditorManager(config: DockerAIEditorConfig): Docke
   return new DockerAIEditorManager(config);
 }
 
-// 🎯 預設Docker上下文配置
-export function createDefaultDockerContext(containerId: string, containerName?: string): DockerContext {
+// 🎯 預設Docker上下文配置（專案工作區模式）
+export function createDefaultDockerContext(containerId: string, containerName?: string, projectName?: string): DockerContext {
+  // 標準化專案名稱並強制使用專案工作區路徑
+  const normalizeProjectName = (name: string) => name.replace(/-/g, '_');
+  const normalizedProjectName = projectName ? normalizeProjectName(projectName) : null;
+  const workingDirectory = normalizedProjectName 
+    ? `/app/workspace/${normalizedProjectName}` 
+    : '/app/workspace';
+
+  console.log(`🐳 創建 Docker 上下文 (ai-editor-manager):`, {
+    containerId: containerId.substring(0, 12),
+    containerName: containerName || `ai-dev-${containerId.substring(0, 12)}`,
+    workingDirectory,
+    originalProjectName: projectName,
+    normalizedProjectName
+  });
+
   return {
     containerId,
     containerName: containerName || `ai-dev-${containerId.substring(0, 12)}`,
-    workingDirectory: '/app',
+    workingDirectory,
     status: 'running'
   };
 }

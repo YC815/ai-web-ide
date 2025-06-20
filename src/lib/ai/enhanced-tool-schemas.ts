@@ -65,8 +65,8 @@ export const DOCKER_READ_FILE_SCHEMA: EnhancedToolSchema = {
 - "樣式檔案" → globals.css, tailwind.config.js
 
 ⚠️ **參數名稱重要提醒**：
-- 必須使用 "filePath" 作為參數名稱
-- 不是 "input"、不是 "path"、不是 "file"`,
+- 必須使用 "filePath" 作為唯一的參數名稱。
+- 不支援 "input"、"path"、"file" 等任何其他名稱。`,
   
   parameters: z.object({
     filePath: z.string()
@@ -91,16 +91,16 @@ export const DOCKER_READ_FILE_SCHEMA: EnhancedToolSchema = {
     {
       scenario: '正確的參數格式示範',
       input: { filePath: 'src/components/Button.tsx' },
-      explanation: '注意：參數名稱是 filePath，不是 input 或其他名稱',
+      explanation: '注意：參數名稱必須是 filePath。',
       expectedOutput: '成功讀取組件檔案內容'
     }
   ],
   
   commonErrors: [
     {
-      error: '參數名稱錯誤：使用了 "input" 而不是 "filePath"',
-      cause: 'AI調用時傳錯了參數名稱',
-      solution: '必須使用 { "filePath": "src/app/page.tsx" } 格式'
+      error: '參數名稱錯誤：使用了不支援的參數名稱',
+      cause: 'AI調用時使用了 "input"、"path"、"file" 等不支援的參數名稱',
+      solution: '請務必使用 { "filePath": "src/app/page.tsx" } 格式。'
     },
     {
       error: '使用絕對路徑',
@@ -144,8 +144,8 @@ export const DOCKER_LS_SCHEMA: EnhancedToolSchema = {
 - 組件目錄：'src/components'
 
 ⚠️ **參數名稱重要提醒**：
-- 必須使用 "path" 作為參數名稱
-- 不是 "directoryPath"、不是 "input"、不是 "dir"`,
+- 必須使用 "path" 作為唯一的參數名稱。
+- 不支援 "input"、"directoryPath"、"dir" 等任何其他名稱。`,
   
   parameters: z.object({
     path: z.string()
@@ -177,16 +177,16 @@ export const DOCKER_LS_SCHEMA: EnhancedToolSchema = {
     {
       scenario: '使用長格式查看',
       input: { path: 'src/app', long: true },
-      explanation: '注意：參數名稱是 path，不是 directoryPath 或 input',
+      explanation: '注意：參數名稱必須是 path。',
       expectedOutput: '詳細的檔案資訊列表'
     }
   ],
   
   commonErrors: [
     {
-      error: '參數名稱錯誤：使用了 "directoryPath" 或 "input" 而不是 "path"',
-      cause: 'AI調用時傳錯了參數名稱',
-      solution: '必須使用 { "path": "src" } 格式'
+      error: '參數名稱錯誤：使用了不支援的參數名稱',
+      cause: 'AI調用時使用了 "input"、"directoryPath"、"dir" 等不支援的參數名稱',
+      solution: '請務必使用 { "path": "src" } 格式。'
     },
     {
       error: '目錄不存在',
@@ -397,10 +397,136 @@ export const LIST_DIRECTORY_SCHEMA: EnhancedToolSchema = {
   category: ToolCategory.FILE_OPERATIONS
 };
 
+/**
+ * Docker 檔案寫入工具 - 加強版參數處理
+ * 
+ * ⚠️ **重要：僅支援 filePath 和 content 兩個參數**
+ */
+export const DOCKER_WRITE_FILE_SCHEMA: EnhancedToolSchema = {
+  name: 'docker_write_file',
+  description: `✍️ 在 Docker 容器內寫入或覆蓋檔案內容
+
+🎯 **正確使用格式**：
+\`\`\`json
+{
+  "filePath": "src/app/page.tsx",
+  "content": "檔案的完整內容字串"
+}
+\`\`\`
+
+⚠️ **重要提醒**：
+- **絕對不要使用 "input" 參數**：這會導致錯誤
+- **只能使用 "filePath" 和 "content"**：其他參數名稱會被自動修復但可能失敗
+- **content 必須是完整的檔案內容**：不是路徑、不是部分內容
+
+📋 **參數規則**：
+- **filePath**: 檔案路徑（相對路徑），例如 'src/app/page.tsx'
+- **content**: 完整的檔案內容字串，支援多行文字
+
+🚫 **錯誤格式範例**（避免使用）：
+\`\`\`json
+// ❌ 錯誤：使用了 input 參數
+{ "input": "src/app/page.tsx", "content": "..." }
+
+// ❌ 錯誤：使用了 input 作為內容
+{ "filePath": "src/app/page.tsx", "input": "..." }
+
+// ❌ 錯誤：使用了其他參數名稱
+{ "path": "src/app/page.tsx", "data": "..." }
+\`\`\`
+
+✅ **正確格式範例**：
+\`\`\`json
+{
+  "filePath": "src/app/page.tsx",
+  "content": "import React from 'react';\\n\\nexport default function Home() {\\n  return <h1>Hello World</h1>;\\n}"
+}
+\`\`\``,
+  
+  parameters: z.object({
+    filePath: z.string()
+      .describe('✅ 檔案路徑（相對路徑），例如：src/app/page.tsx'),
+    content: z.string()
+      .describe('✅ 完整的檔案內容字串（支援多行、轉義字符）')
+  }),
+  
+  examples: [
+    {
+      scenario: '修改 Next.js 主頁',
+      input: { 
+        filePath: 'src/app/page.tsx',
+        content: `import React from 'react';
+
+export default function Home() {
+  return (
+    <div>
+      <h1>AI編輯測試</h1>
+      <p>這是修改後的內容</p>
+    </div>
+  );
+}` 
+      },
+      explanation: '✅ 正確格式：使用 filePath 和 content 參數。content 包含完整的檔案內容。',
+      expectedOutput: '成功寫入檔案：src/app/page.tsx'
+    },
+    {
+      scenario: '創建新的 React 組件',
+      input: {
+        filePath: 'src/components/Button.tsx',
+        content: `import React from 'react';
+
+interface ButtonProps {
+  onClick: () => void;
+  children: React.ReactNode;
+}
+
+const Button: React.FC<ButtonProps> = ({ onClick, children }) => {
+  return (
+    <button onClick={onClick} className="btn">
+      {children}
+    </button>
+  );
+};
+
+export default Button;`
+      },
+      explanation: '✅ 正確格式：創建新檔案，使用完整的 TypeScript 內容。',
+      expectedOutput: '成功創建並寫入檔案：src/components/Button.tsx'
+    }
+  ],
+  
+  commonErrors: [
+    {
+      error: '使用了 input 參數',
+      cause: 'AI 錯誤地使用了 "input" 而不是 "filePath" 或 "content"',
+      solution: '必須使用 { "filePath": "路徑", "content": "內容" } 格式。絕對不要使用 "input" 參數。'
+    },
+    {
+      error: '參數名稱錯誤',
+      cause: '使用了 "path", "file", "data" 等錯誤的參數名稱',
+      solution: '只能使用 "filePath" 和 "content" 這兩個參數名稱。'
+    },
+    {
+      error: 'content 類型錯誤',
+      cause: 'content 不是字串類型或為 undefined',
+      solution: '確保 content 是一個完整的字串，包含所有要寫入檔案的內容。'
+    }
+  ],
+  
+  successPatterns: [
+    '成功寫入檔案',
+    '檔案已更新',
+    '成功創建檔案'
+  ],
+  
+  category: ToolCategory.DOCKER_OPERATIONS
+};
+
 // === 工具 Schema 註冊表 ===
 export const ENHANCED_TOOL_SCHEMAS: Record<string, EnhancedToolSchema> = {
   docker_read_file: DOCKER_READ_FILE_SCHEMA,
   docker_ls: DOCKER_LS_SCHEMA,
+  docker_write_file: DOCKER_WRITE_FILE_SCHEMA,
   // docker_tree: DOCKER_TREE_SCHEMA,  // 暫時禁用
   read_file: READ_FILE_SCHEMA,
   create_file: CREATE_FILE_SCHEMA,

@@ -91,9 +91,17 @@ export async function createLangChainChatEngine(chatHistory, projectName) {
           },
           {
             name: "docker_writeFile",
-            description: `Write or overwrite a file inside the Docker container for project '${projectName}'. Ex: docker_writeFile({ "filePath": "src/app/page.tsx", "content": "..." })`,
-            func: (args) =>
-              fileSystemTool.writeFile(args.filePath, args.content),
+            description: `Write or overwrite a file inside the Docker container for project '${projectName}'. Supports both 'content' and 'input' parameter names. Ex: docker_writeFile({ "filePath": "src/app/page.tsx", "content": "..." }) or docker_writeFile({ "filePath": "src/app/page.tsx", "input": "..." })`,
+            func: (args) => {
+              // 支援 content 和 input 兩種參數名稱
+              const content = args.content || args.input;
+              if (!content) {
+                throw new Error(
+                  'Must provide either "content" or "input" parameter'
+                );
+              }
+              return fileSystemTool.writeFile(args.filePath, content);
+            },
           },
           {
             name: "docker_startDevServer",

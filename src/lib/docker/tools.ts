@@ -834,7 +834,7 @@ export class DockerFileSystemTool {
   /**
    * 顯示目錄的樹狀結構 - 暫時禁用
    */
-  async showDirectoryTree(_dirPath: string = '.'): Promise<DockerToolResponse<string[]>> {
+  async showDirectoryTree(): Promise<DockerToolResponse<string[]>> {
     // 暫時禁用 tree 功能
     return {
       success: false,

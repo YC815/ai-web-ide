@@ -19,6 +19,22 @@ const safeExecAsync = (command: string, options: { maxBuffer?: number; timeout?:
   return execAsync(command, defaultOptions);
 };
 
+/**
+ * 從容器 ID 中提取專案名稱
+ */
+function extractProjectNameFromContainerId(containerId: string): string | undefined {
+  // 支援完整容器名稱格式：ai-web-ide-<project-name>-<timestamp>
+  const match = containerId.match(/ai-web-ide-(.+?)-\d+$/);
+  if (match && match[1]) {
+    console.log(`🔍 從容器 ID 提取專案名稱: ${containerId} -> ${match[1]}`);
+    return match[1];
+  }
+  
+  // 如果格式不匹配，記錄警告但繼續執行
+  console.warn(`⚠️ 無法從容器 ID 提取專案名稱: ${containerId}`);
+  return undefined;
+}
+
 export interface DockerApiResponse {
   success: boolean;
   stdout?: string;
@@ -31,10 +47,14 @@ export interface DockerApiResponse {
 
 export async function POST(request: NextRequest) {
   try {
+    console.log('[Docker API] POST 請求開始');
     const body = await request.json();
     const { action, containerId, parameters = {}, command, workingDirectory } = body;
+    
+    console.log('[Docker API] 解析的請求參數:', { action, containerId, parametersKeys: Object.keys(parameters || {}), command, workingDirectory });
 
     if (!containerId) {
+      console.log('[Docker API] 錯誤：缺少 containerId');
       return NextResponse.json(
         { success: false, error: 'containerId is required' },
         { status: 400 }
@@ -66,7 +86,9 @@ export async function POST(request: NextRequest) {
       
       default:
         // 處理 Docker AI 工具調用
-        const dockerContext = createDefaultDockerContext(containerId);
+        // 從容器名稱中提取專案名稱
+        const projectName = extractProjectNameFromContainerId(containerId);
+        const dockerContext = createDefaultDockerContext(containerId, undefined, projectName);
         
         const dockerAI = createDockerAIEditorManager({
           dockerContext,
@@ -86,13 +108,22 @@ export async function POST(request: NextRequest) {
     }
 
   } catch (error) {
-    console.error('Docker API error:', error);
+    console.error('[Docker API] 發生錯誤:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Internal server error';
+    
+    // 確保始終返回 JSON 回應
     return NextResponse.json(
       { 
         success: false, 
-        error: error instanceof Error ? error.message : 'Internal server error' 
+        error: `Docker API 錯誤: ${errorMessage}`,
+        timestamp: new Date().toISOString()
       },
-      { status: 500 }
+      { 
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      }
     );
   }
 }
@@ -111,7 +142,9 @@ export async function GET(request: NextRequest) {
 
   try {
     // 創建Docker上下文
-    const dockerContext = createDefaultDockerContext(containerId);
+    // 從容器名稱中提取專案名稱
+    const projectName = extractProjectNameFromContainerId(containerId);
+    const dockerContext = createDefaultDockerContext(containerId, undefined, projectName);
     
     // 創建AI編輯器管理器
     const dockerAI = createDockerAIEditorManager({
@@ -202,16 +235,22 @@ async function handleExecCommand(
     });
 
   } catch (error) {
-    console.error(`執行Docker命令失敗:`, error);
+    console.error(`[Docker API] 執行Docker命令失敗:`, error);
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     
     return NextResponse.json(
       { 
         success: false, 
         error: `Docker exec failed: ${errorMessage}`,
-        stderr: errorMessage 
+        stderr: errorMessage,
+        timestamp: new Date().toISOString()
       },
-      { status: 500 }
+      { 
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      }
     );
   }
 }

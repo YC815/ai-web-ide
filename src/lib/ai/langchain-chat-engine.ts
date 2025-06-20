@@ -1,9 +1,6 @@
 import { ChatOpenAI } from '@langchain/openai';
 import { AgentExecutor, createOpenAIToolsAgent } from 'langchain/agents';
 import {
-  SystemMessage,
-} from '@langchain/core/messages';
-import {
   ChatPromptTemplate,
   MessagesPlaceholder,
 } from '@langchain/core/prompts';
@@ -73,6 +70,29 @@ You have access to a suite of tools to interact with the user's Docker environme
 Your task is to follow these rules strictly to provide a fast and accurate response.
 Here is the current conversation history:`;
 
+const DYNAMIC_PROMPT_TEMPLATE = `You are a helpful AI assistant named ${AI_ASSISTANT_NAME} who is an expert in web development.
+Your primary role is to assist users with their web development projects running inside Docker containers.
+You have access to a suite of tools to interact with the user's Docker environment.
+
+**Current Project Context:**
+- Project Name: {project_name}
+- Container ID: {container_id}
+- Working Directory: {working_directory}
+
+**Core Directives:**
+1.  **Goal-Oriented Execution:** Your primary goal is to complete the user's request. Be proactive and autonomous. Use tools to gather information and solve problems.
+2.  **Container Sandbox:** All file operations are sandboxed to the user's project Docker container. You CANNOT access the host machine.
+3.  **Dynamic Context:** The project context above is automatically handled. When using file tools, you can use relative paths (e.g., 'src/app/page.tsx'), and the system will resolve them within the working directory.
+
+**CRITICAL BEHAVIORAL RULES - NON-NEGOTIABLE:**
+4.  **IMMEDIATE STOP ON SUCCESS:** This is the most important rule. The moment a tool call successfully provides the information the user asked for, you MUST stop.
+    *   After successfully reading a file with \`docker_read_file\` → STOP IMMEDIATELY and output the file content.
+    *   After successfully listing files and finding what you need → STOP and use that information.
+    *   After any successful action that completes the user's request → STOP and provide a summary.
+5.  **NO REPETITIVE ACTIONS:** Do not call the same tool with the same parameters more than once. If a tool call gives you the information you need, do not call it again. If a tool call fails, analyze the error and try a different approach, do not just repeat the same failed call.
+6.  **EFFICIENT TOOL USE:** Each tool call must have a clear purpose. Do not explore the filesystem aimlessly. If you need to find a file, use \`docker_ls\` or \`docker_tree\` on specific directories. If you know the filename, you can try searching for it.
+`;
+
 /**
  * 專案上下文介面
  */
@@ -94,74 +114,118 @@ function toLangChainTool(
   context: { containerId: string; projectName?: string; workingDirectory?: string; }
 ): DynamicTool {
   
-  // 為了相容 LangChain Agent，動態將 'path' 參數改名為 'input'
+  // 使用原始的工具 schema，不進行參數名稱轉換
   const toolSchema = { ...tool.schema };
-  if (toolSchema.parameters.properties.path && !toolSchema.parameters.properties.input) {
-    console.log(`[toLangChainTool] 正在為 ${tool.id} 將 'path' 參數轉換為 'input'...`);
-    toolSchema.parameters.properties.input = {
-      ...toolSchema.parameters.properties.path,
-      description: (toolSchema.parameters.properties.path as { description: string }).description.replace(/path/g, 'input'),
-    };
-    delete toolSchema.parameters.properties.path;
-  }
   
   // 創建 DynamicTool
   return new DynamicTool({
     name: tool.id,
     description: tool.schema.description,
-    func: async (args: string) => {
-      // 修復：正確處理參數類型
+    func: async (args: any) => { // 接受任何類型的參數
       let processedArgs: Record<string, unknown>;
       
       try {
-        console.log(`[Agent Tool] 執行工具: ${tool.id}`, { args });
+        // 增強日誌：記錄收到的原始參數
+        console.log(`[Agent Tool] RAW ARGS for ${tool.id}:`, { args, type: typeof args });
 
-        // --- 核心參數修正邏輯 ---
-        // 確保無論 agent 如何傳參（input, path, 或字串），都能正確處理
         if (typeof args === 'string') {
           try {
             processedArgs = JSON.parse(args);
-          } catch {
-            processedArgs = { input: args };
+            console.log(`[Agent Tool] Parsed args from string:`, processedArgs);
+          } catch (e) {
+            console.error(`[Agent Tool] JSON.parse failed for args string:`, args, e);
+            // 解析失敗時的降級處理
+            if (tool.id === 'docker_read_file' || tool.id === 'docker_write_file') {
+              processedArgs = { filePath: args };
+            } else {
+              processedArgs = { path: args };
+            }
           }
         } else {
           processedArgs = args as Record<string, unknown>;
+          console.log(`[Agent Tool] Args is already an object:`, processedArgs);
         }
         
-        // 統一參數名稱：優先使用正確的參數名稱
-        if (processedArgs && (processedArgs.path !== undefined || processedArgs.input !== undefined)) {
-          const pathValue = processedArgs.path !== undefined ? processedArgs.path : processedArgs.input;
+        console.log(`[Agent Tool] BEFORE transformation:`, JSON.parse(JSON.stringify(processedArgs)));
+        
+        // --- 關鍵修復：統一處理名為 'input' 的不正確參數 ---
+        if (processedArgs.input !== undefined) {
+          const inputValue = processedArgs.input;
+          console.log(`[Agent Tool] 偵測到 'input' 參數，值類型: ${typeof inputValue}`);
+
+          if (tool.id === 'docker_write_file') {
+            // === Docker Write File 的特殊處理邏輯 ===
+            console.log(`[docker_write_file] 開始處理 input 參數: ${JSON.stringify(inputValue)}`);
+            
+            // 情況1：input 是檔案路徑（短字串，包含副檔名）
+            if (typeof inputValue === 'string' && 
+                inputValue.length < 200 && 
+                inputValue.match(/\.(tsx?|jsx?|css|html|md|json|js|ts)$/i)) {
+              
+              console.log(`[docker_write_file] 將 input 識別為檔案路徑: ${inputValue}`);
+              processedArgs.filePath = inputValue;
+              delete processedArgs.input; // 移除 input 參數
+              
+              // 如果沒有 content 參數，這是錯誤的
+              if (!processedArgs.content) {
+                console.error(`[docker_write_file] 錯誤：檔案路徑在 input 中，但缺少 content 參數`);
+                throw new Error('參數錯誤：當 input 是檔案路徑時，必須提供 content 參數');
+              }
+            }
+            
+            // 情況2：input 是檔案內容（長字串，包含程式碼特徵）
+            else if (typeof inputValue === 'string' && 
+                     (inputValue.length > 100 || 
+                      inputValue.includes('import ') || 
+                      inputValue.includes('export ') ||
+                      inputValue.includes('function ') ||
+                      inputValue.includes('<') ||
+                      inputValue.includes('{'))) {
+              
+              console.log(`[docker_write_file] 將 input 識別為檔案內容，長度: ${inputValue.length}`);
+              processedArgs.content = inputValue;
+              delete processedArgs.input; // 移除 input 參數
+              
+              // 確保有 filePath
+              if (!processedArgs.filePath) {
+                console.error(`[docker_write_file] 錯誤：檔案內容在 input 中，但缺少 filePath 參數`);
+                throw new Error('參數錯誤：當 input 是檔案內容時，必須提供 filePath 參數');
+              }
+            }
+            
+            // 情況3：無法識別的 input 格式
+            else {
+              console.warn(`[docker_write_file] 無法自動識別 input 參數格式，保持原樣: ${typeof inputValue}`);
+              // 不刪除 input，讓後端函數處理
+            }
+            
+            console.log(`[docker_write_file] 處理後參數:`, {
+              filePath: processedArgs.filePath,
+              content: processedArgs.content ? `內容長度: ${processedArgs.content.length}` : '無',
+              input: processedArgs.input ? `input長度: ${processedArgs.input.length}` : '已移除'
+            });
+          }
           
-          // 根據工具類型設置正確的參數名稱
-          if (tool.id === 'docker_ls' || tool.id === 'docker_tree') {
-            processedArgs.path = pathValue;
-            delete processedArgs.input; // 移除錯誤的參數名稱
-          } else if (tool.id === 'docker_read_file' || tool.id === 'docker_write_file') {
-            processedArgs.filePath = pathValue;
-            delete processedArgs.input;
-            delete processedArgs.path;
-          } else if (tool.id === 'docker_list_directory') {
-            processedArgs.dirPath = pathValue;
-            delete processedArgs.input;
-            delete processedArgs.path;
+          // 其他工具的 input 處理邏輯保持不變
+          else if (tool.id === 'docker_read_file') {
+            if (typeof inputValue === 'string') {
+              processedArgs.filePath = inputValue;
+              delete processedArgs.input;
+              console.log(`[Agent Tool] 將 'input' 映射為 'filePath' (docker_read_file): ${inputValue}`);
+            }
+          } else if (tool.id === 'docker_ls') {
+            if (typeof inputValue === 'string') {
+              processedArgs.path = inputValue;
+              delete processedArgs.input;
+              console.log(`[Agent Tool] 將 'input' 映射為 'path' (docker_ls): ${inputValue}`);
+            }
           } else {
-            processedArgs.path = pathValue;
+            console.log(`[Agent Tool] 工具 ${tool.id} 不支援 'input' 參數，保持原樣`);
           }
         }
 
-        // --- 修復路徑處理 ---
-        // 不要強制修改路徑，讓 Docker 工具自己處理相對路徑
-        // Docker 工具內部會正確處理工作目錄切換
-        console.log(`[Agent Tool] 保持原始路徑參數，讓 Docker 工具處理:`, { 
-          toolId: tool.id, 
-          originalArgs: processedArgs 
-        });
+        console.log(`[Agent Tool] AFTER transformation:`, JSON.parse(JSON.stringify(processedArgs)));
         
-        // 如果工具需要 filePath 參數
-        if (tool.schema.parameters.properties.filePath && processedArgs && processedArgs.path) {
-          processedArgs.filePath = processedArgs.path;
-        }
-
         // 建立增強的上下文
         const enhancedContext = {
           containerId: context.containerId,
@@ -249,7 +313,7 @@ export async function createLangChainChatEngine(
     // 5. 如果都沒有提供，使用預設上下文
     else {
       logger.info(`[ChatEngine] 未提供專案上下文，使用預設 Docker 上下文`);
-      dockerContext = createDefaultDockerContext('default-container');
+      dockerContext = await createDefaultDockerContext();
       contextInfo = 'Default Docker context';
     }
 
@@ -304,8 +368,14 @@ export async function createLangChainChatEngine(
   });
   tools.push(searchTool);
 
+  // 安全地處理 dockerContext 可能為 null 的情況
+  const systemPrompt = DYNAMIC_PROMPT_TEMPLATE
+    .replace('{project_name}', dockerContext?.containerName || 'Unknown')
+    .replace('{container_id}', dockerContext?.containerId?.substring(0, 12) || 'Unknown')
+    .replace('{working_directory}', dockerContext?.workingDirectory || '/app');
+
   const prompt = ChatPromptTemplate.fromMessages([
-    new SystemMessage(PROMPT_TEMPLATE),
+    ['system', systemPrompt],
     new MessagesPlaceholder('chat_history'),
     ['human', '{input}'],
     new MessagesPlaceholder('agent_scratchpad'),
@@ -332,6 +402,11 @@ export async function createLangChainChatEngine(
     verbose: true,
     maxIterations: 15,
     returnIntermediateSteps: true,
+    dockerContext: dockerContext ? {
+      containerId: dockerContext.containerId,
+      containerName: dockerContext.containerName,
+      workingDirectory: dockerContext.workingDirectory
+    } : 'null'
   });
 
   return executor;

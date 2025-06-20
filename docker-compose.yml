@@ -13,17 +13,10 @@ services:
     container_name: ai-web-ide-frontend
     ports:
       - "3000:3000"
-    volumes:
-      # 映射源代碼目錄以支援熱重載
-      - ./src:/app/src
-      - ./public:/app/public
-      - ./package.json:/app/package.json
-      - ./package-lock.json:/app/package-lock.json
-      - ./next.config.ts:/app/next.config.ts
-      - ./tailwind.config.js:/app/tailwind.config.js
-      - ./tsconfig.json:/app/tsconfig.json
-      # 排除 node_modules，使用容器內的
-      - /app/node_modules
+    # The 'volumes' section has been removed to ensure AI file operations are isolated
+    # within the container and do not affect the host file system.
+    # To re-enable hot-reloading for development, you can add the 'volumes' section back,
+    # for example by using a local docker-compose.override.yml file.
     environment:
       - NODE_ENV=development
       - NEXT_TELEMETRY_DISABLED=1
@@ -135,4 +128,4 @@ volumes:
 # 生產環境: docker-compose --profile production up -d
 # 僅前端: docker-compose up frontend
 # 停止所有: docker-compose down
-# 清理數據: docker-compose down -v 
+# 清理數據: docker-compose down -v

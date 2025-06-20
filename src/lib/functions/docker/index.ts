@@ -15,7 +15,8 @@ import {
   normalizeProjectName,
   createDefaultDockerContext
 } from '../../docker/docker-context-config';
-import { createDynamicDockerToolkit, getDynamicProjectToolManager } from '@/lib/docker/dynamic-project-tools';
+import { createToolLogger } from '../../logger';
+import { ExecutionContext } from './types';
 
 /**
  * Docker 工具函數集合
@@ -128,41 +129,6 @@ async function getRealDockerToolkit(context: unknown): Promise<DockerToolkit> {
   console.log(`[getRealDockerToolkit] 開始獲取 Docker 工具包，context:`, context);
 
   try {
-    // 嘗試使用動態專案工具管理器
-    if (context && typeof context === 'object') {
-      const ctx = context as Record<string, unknown>;
-
-      // 構建動態上下文
-      const dynamicContext: any = {};
-      
-      if (ctx.url && typeof ctx.url === 'string') {
-        dynamicContext.url = ctx.url;
-      }
-      
-      if (ctx.projectId && typeof ctx.projectId === 'string') {
-        dynamicContext.projectId = ctx.projectId;
-      }
-      
-      if (ctx.projectName && typeof ctx.projectName === 'string') {
-        dynamicContext.projectName = ctx.projectName;
-      }
-      
-      if (ctx.containerId && typeof ctx.containerId === 'string') {
-        dynamicContext.containerId = ctx.containerId;
-      }
-
-      // 使用動態工具管理器創建工具包
-      if (Object.keys(dynamicContext).length > 0) {
-        console.log(`[getRealDockerToolkit] 使用動態專案工具管理器:`, dynamicContext);
-        const toolkit = await createDynamicDockerToolkit(dynamicContext);
-        if (toolkit) {
-          console.log(`[getRealDockerToolkit] 成功創建動態工具包`);
-          return toolkit;
-        }
-      }
-    }
-
-    // 回退到原有邏輯
     let dockerContext: DockerContext | null = null;
 
     if (context && typeof context === 'object') {
@@ -180,14 +146,21 @@ async function getRealDockerToolkit(context: unknown): Promise<DockerToolkit> {
       }
     }
 
-    // 如果沒有找到上下文，創建預設的
+    // 如果沒有找到上下文，嘗試創建預設的
     if (!dockerContext) {
-      console.log(`[getRealDockerToolkit] 創建預設 Docker 上下文`);
+      console.log(`[getRealDockerToolkit] 嘗試創建預設 Docker 上下文`);
       dockerContext = await createDefaultDockerContext();
+      
+      if (!dockerContext) {
+        console.error(`[getRealDockerToolkit] 無法創建預設 Docker 上下文`);
+        throw new Error('❌ 無法連接到 Docker 容器。請確保：\n1. Docker 正在運行\n2. 有可用的專案容器\n3. 容器狀態正常');
+      }
     }
 
-    if (!dockerContext) {
-      throw new Error('無法創建 Docker 上下文');
+    // 驗證 Docker 上下文的完整性
+    if (!dockerContext.containerId || !dockerContext.containerName || !dockerContext.workingDirectory) {
+      console.error(`[getRealDockerToolkit] Docker 上下文不完整:`, dockerContext);
+      throw new Error('❌ Docker 上下文配置不完整，無法執行容器操作');
     }
 
     console.log(`[getRealDockerToolkit] 成功獲取 Docker 上下文:`, {
@@ -201,7 +174,15 @@ async function getRealDockerToolkit(context: unknown): Promise<DockerToolkit> {
 
   } catch (error) {
     console.error(`[getRealDockerToolkit] 獲取 Docker 工具包失敗:`, error);
-    throw error;
+    
+    // 如果是我們自己拋出的錯誤，直接重新拋出
+    if (error instanceof Error && error.message.startsWith('❌')) {
+      throw error;
+    }
+    
+    // 對於其他錯誤，包裝成更友好的錯誤訊息
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    throw new Error(`❌ Docker 工具初始化失敗: ${errorMessage}`);
   }
 }
 
@@ -522,7 +503,10 @@ export async function docker_list_directory(
       dirPath = parameters;
     } else if (parameters && typeof parameters === 'object') {
       const params = parameters as Record<string, unknown>;
-      dirPath = (params.dirPath as string) || '.';
+      // 支援 dirPath（標準）和 path 參數名稱
+      dirPath = (params.dirPath as string) || 
+                (params.path as string) || 
+                '.';
       options = {
         recursive: params.recursive as boolean,
         showHidden: params.showHidden as boolean,
@@ -542,55 +526,173 @@ export async function docker_list_directory(
   });
 }
 
+/**
+ * 在Docker容器內讀取檔案（需安全驗證）- 嚴格模式
+ */
 export async function docker_read_file(
-  parameters: { filePath: string } | string, 
+  parameters: { filePath: string }, 
   context?: unknown
 ): Promise<{
   success: boolean;
   content?: string;
-  data?: string;
   message?: string;
   error?: string;
 }> {
   return safeToolCall('docker_read_file', parameters, async () => {
-    const dockerToolkit = await getRealDockerToolkit(context);
-    
-    // 處理參數：支援字串或物件格式
-    let filePath: string;
-    if (typeof parameters === 'string') {
-      filePath = parameters;
-    } else {
-      filePath = parameters.filePath;
-    }
-    
-    const result = await dockerToolkit.fileSystem.readFile(filePath);
+    const { filePath } = parameters;
 
-    return {
-      success: result.success,
-      content: result.data,
-      data: result.data, // 提供兩種格式以保持相容性
-      message: result.message,
-      error: result.error
-    };
+    if (!filePath) {
+      throw new Error(`參數驗證失敗：缺少 filePath。收到的參數: ${JSON.stringify(parameters)}`);
+    }
+
+    const logger = createToolLogger('docker_read_file');
+    logger.info(`讀取檔案: ${filePath}`);
+
+    try {
+      const dockerToolkit = await getRealDockerToolkit(context);
+      const result = await dockerToolkit.fileSystem.readFile(filePath);
+      
+      if (result.success) {
+        logger.info(`成功讀取檔案: ${filePath}`);
+        return {
+          success: true,
+          content: result.data,
+          message: result.message
+        };
+      } else {
+        logger.error(`讀取檔案失敗: ${result.error}`);
+        return { success: false, error: result.error, message: result.message };
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(`執行讀取檔案時發生異常: ${errorMessage}`);
+      throw new Error(`執行 docker_read_file 時發生內部錯誤: ${errorMessage}`);
+    }
   });
 }
 
-export async function docker_write_file(filePath: string, content: string, context?: unknown): Promise<{
+/**
+ * 寫入檔案到Docker容器內（需安全驗證）- 嚴格模式
+ */
+export async function docker_write_file(
+  parameters: { filePath?: string; content?: string; input?: string; path?: string; file?: string; data?: string; text?: string }, 
+  context?: unknown
+): Promise<{
   success: boolean;
   message?: string;
   error?: string;
   containerOutput?: string;
 }> {
-  return safeToolCall('docker_write_file', { filePath, content }, async () => {
-    const dockerToolkit = await getRealDockerToolkit(context);
-    const result = await dockerToolkit.fileSystem.writeFile(filePath, content);
+  return safeToolCall('docker_write_file', parameters, async () => {
+    const logger = createToolLogger('docker_write_file');
+    
+    // === 第一步：參數清理和標準化 ===
+    let filePath: string | undefined;
+    let content: string | undefined;
+    
+    // 提取檔案路徑，支援多種參數名稱
+    filePath = parameters.filePath || parameters.path || parameters.file;
+    
+    // 提取內容，支援多種參數名稱
+    content = parameters.content || parameters.input || parameters.data || parameters.text;
+    
+    logger.info(`[參數標準化] 原始參數: ${JSON.stringify(Object.keys(parameters))}`);
+    logger.info(`[參數標準化] 提取到 filePath: ${filePath}`);
+    logger.info(`[參數標準化] 提取到 content 類型: ${typeof content}, 長度: ${content?.length || 0}`);
+    
+    // === 第二步：智能參數修復 ===
+    // 如果沒有找到 filePath，但 input 看起來像檔案路徑
+    if (!filePath && parameters.input && typeof parameters.input === 'string') {
+      // 檢查 input 是否看起來像檔案路徑
+      if (parameters.input.match(/\.(tsx?|jsx?|css|html|md|json|js|ts)$/i) && parameters.input.length < 200) {
+        filePath = parameters.input;
+        content = parameters.content; // 使用 content 作為內容
+        logger.info(`[智能修復] 將 input 識別為檔案路徑: ${filePath}`);
+      }
+    }
+    
+    // 如果沒有找到 content，但 input 看起來像內容
+    if (!content && parameters.input && typeof parameters.input === 'string') {
+      // 如果 input 很長或包含程式碼特徵，將其作為內容
+      if (parameters.input.length > 50 || 
+          parameters.input.includes('import ') || 
+          parameters.input.includes('export ') ||
+          parameters.input.includes('function ') ||
+          parameters.input.includes('<') ||
+          parameters.input.includes('{')) {
+        content = parameters.input;
+        logger.info(`[智能修復] 將 input 識別為檔案內容，長度: ${content.length}`);
+      }
+    }
+    
+    // === 第三步：最終驗證 ===
+    if (!filePath || typeof filePath !== 'string' || filePath.trim() === '') {
+      const availableParams = Object.keys(parameters).join(', ');
+      throw new Error(`❌ 參數錯誤：缺少有效的檔案路徑。
+請使用 { "filePath": "路徑", "content": "內容" } 格式。
+收到的參數: ${availableParams}
+檔案路徑值: ${JSON.stringify(filePath)}`);
+    }
 
-    return {
-      success: result.success,
-      message: result.message,
-      error: result.error,
-      containerOutput: result.data
-    };
+    if (content === undefined || content === null) {
+      const availableParams = Object.keys(parameters).join(', ');
+      throw new Error(`❌ 參數錯誤：缺少檔案內容。
+請使用 { "filePath": "${filePath}", "content": "內容" } 格式。
+收到的參數: ${availableParams}
+內容值: ${JSON.stringify(content)}`);
+    }
+
+    // 確保 content 是字串類型
+    if (typeof content !== 'string') {
+      try {
+        content = String(content);
+        logger.info(`[類型轉換] 將 content 轉換為字串: ${typeof content}`);
+      } catch {
+        throw new Error(`❌ 參數錯誤：無法將內容轉換為字串。
+內容類型: ${typeof content}
+內容值: ${JSON.stringify(content)}`);
+      }
+    }
+
+    logger.info(`[智能修復] 將 input 識別為檔案內容，長度: ${content.length}`);
+
+    // === 第四步：清理檔案路徑 ===
+    filePath = filePath.trim();
+    // 移除開頭的 ./ 或 /
+    if (filePath.startsWith('./')) {
+      filePath = filePath.substring(2);
+    } else if (filePath.startsWith('/')) {
+      filePath = filePath.substring(1);
+    }
+
+    logger.info(`✅ 參數驗證通過 - 檔案: ${filePath}, 內容長度: ${content.length}`);
+
+    // === 第五步：執行寫入操作 ===
+    try {
+      const dockerToolkit = await getRealDockerToolkit(context);
+      const result = await dockerToolkit.fileSystem.writeFile(filePath, content);
+
+      if (result.success) {
+        logger.info(`✅ 成功寫入檔案: ${filePath}`);
+        return {
+          success: true,
+          message: `成功寫入檔案：${filePath}（${content.length} 字符）`,
+          containerOutput: result.containerOutput || result.data
+        };
+      } else {
+        logger.error(`❌ 寫入檔案失敗: ${result.error}`);
+        return {
+          success: false,
+          error: `寫入檔案失敗：${result.error}`,
+          message: `無法寫入檔案：${filePath}`
+        };
+      }
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(`💥 執行寫入檔案時發生異常: ${errorMessage}`);
+      throw new Error(`執行 docker_write_file 時發生內部錯誤：${errorMessage}`);
+    }
   });
 }
 
@@ -758,20 +860,15 @@ export const dockerReadFile: FunctionDefinition = {
   },
   handler: async (parameters: Record<string, unknown>, context?: unknown) => {
     return safeToolCall('docker_read_file', parameters, async () => {
-      // 直接調用 docker_read_file 函數
-      const filePath = parameters.filePath as string;
-      
-      if (!filePath) {
-        return 'Error: 請提供檔案路徑';
-      }
-
-      const result = await docker_read_file({ filePath }, context);
+      // 參數已在 schema 層被強制統一，不再需要相容性處理
+      const result = await docker_read_file({
+        filePath: parameters.filePath as string
+      }, context);
 
       if (!result.success) {
-        return `錯誤：${result.error}`;
+        return `讀取失敗: ${result.error || '未知錯誤'}`;
       }
-
-      return result.content || result.data || '檔案內容為空';
+      return result.content || '檔案為空或讀取失敗。';
     });
   },
   validator: async (parameters: unknown) => {
@@ -782,12 +879,12 @@ export const dockerReadFile: FunctionDefinition = {
       };
     }
 
-    const params = parameters as Record<string, unknown>;
+    const params = parameters as { filePath?: unknown };
 
-    if (!params.filePath || typeof params.filePath !== 'string') {
+    if (typeof params.filePath !== 'string' || !params.filePath) {
       return {
         isValid: false,
-        reason: '參數 "filePath" 是必要的，且必須是字串'
+        reason: '參數 "filePath" 必須是有效的非空字串。'
       };
     }
 
@@ -800,26 +897,27 @@ export const dockerLs: FunctionDefinition = {
   id: 'docker_ls',
   schema: {
     name: 'docker_ls',
-    description: '在 Docker 容器內執行 ls 命令。您可以提供目錄路徑，例如：. 或 src/app',
+    description: '在 Docker 容器內執行 ls 命令來列出檔案和目錄。',
     parameters: {
       type: 'object',
       properties: {
         path: {
           type: 'string',
-          description: '目錄路徑，相對於容器內的 /app 目錄，預設為當前目錄',
+          description: '要列出內容的目錄路徑，預設為當前工作目錄 "."。',
           default: '.'
         },
         long: {
           type: 'boolean',
-          description: '-l, 使用長格式顯示詳細資訊',
+          description: '是否使用長格式 (-l) 顯示詳細資訊。',
           default: false
         },
         all: {
           type: 'boolean',
-          description: '-a, 顯示隱藏檔案',
+          description: '是否顯示所有檔案，包括隱藏檔案 (-a)。',
           default: false
         }
-      }
+      },
+      required: ['path']
     }
   },
   metadata: {
@@ -834,21 +932,17 @@ export const dockerLs: FunctionDefinition = {
   },
   handler: async (parameters: Record<string, unknown>, context?: unknown) => {
     return safeToolCall('docker_ls', parameters, async () => {
-      // 直接調用已修正的 docker_ls 函數
+      // 參數已在 schema 層被強制統一，不再需要相容性處理
       const result = await docker_ls({
-        path: (parameters.path as string) || '.',
-        long: (parameters.long as boolean) || false,
-        all: (parameters.all as boolean) || false,
-        recursive: false, // FunctionDefinition 版本不支援遞歸
-        human: false
+        path: parameters.path as string,
+        long: parameters.long as boolean,
+        all: parameters.all as boolean,
       }, context);
 
-      // 返回標準格式
       if (!result.success) {
         return `錯誤：${result.error}`;
       }
-
-      return result.output || result.files?.join('\n') || '目錄為空';
+      return result.output || result.files?.join('\n') || '目錄為空或沒有內容。';
     });
   },
   validator: async (parameters: unknown) => {
@@ -1034,17 +1128,17 @@ export const dockerWriteFile: FunctionDefinition = {
   id: 'docker_write_file',
   schema: {
     name: 'docker_write_file',
-    description: '寫入內容到 Docker 容器內的檔案',
+    description: '寫入或覆蓋內容到 Docker 容器內的指定檔案。',
     parameters: {
       type: 'object',
       properties: {
         filePath: {
           type: 'string',
-          description: '要寫入的檔案路徑（相對於專案根目錄）'
+          description: '要寫入或覆蓋的檔案的相對路徑，例如 `src/app/page.tsx`。'
         },
         content: {
           type: 'string',
-          description: '要寫入的檔案內容'
+          description: '要寫入的完整檔案內容。'
         }
       },
       required: ['filePath', 'content']
@@ -1053,28 +1147,141 @@ export const dockerWriteFile: FunctionDefinition = {
   metadata: {
     category: ToolCategory.DOCKER,
     accessLevel: FunctionAccessLevel.RESTRICTED,
-    version: '2.1.0', // Incremented version
+    version: '2.2.0', // 升級版本號
     author: 'AI Creator Team',
-    tags: ['docker', 'file', 'write'],
+    tags: ['docker', 'file', 'write', 'simplified'],
     requiresAuth: true,
     rateLimited: true,
-    maxCallsPerMinute: 30
+    maxCallsPerMinute: 20
   },
   handler: async (parameters: Record<string, unknown>, context?: unknown) => {
     return safeToolCall('docker_write_file', parameters, async () => {
-      return await docker_write_file(parameters.filePath as string, parameters.content as string, context);
+      console.log(`[dockerWriteFile handler] 收到參數:`, {
+        keys: Object.keys(parameters),
+        filePath: parameters.filePath,
+        contentType: typeof parameters.content,
+        contentLength: typeof parameters.content === 'string' ? parameters.content.length : 0,
+        input: parameters.input ? 'exists' : 'missing'
+      });
+
+      // === 簡化的參數處理邏輯 ===
+      let filePath: string | undefined;
+      let content: string | undefined;
+
+      // 1. 優先使用標準參數名
+      if (parameters.filePath && typeof parameters.filePath === 'string') {
+        filePath = parameters.filePath;
+      }
+      
+      if (parameters.content && typeof parameters.content === 'string') {
+        content = parameters.content;
+      }
+
+      // 2. 如果標準參數不存在，嘗試解析 input（僅當它是 JSON 字串時）
+      if ((!filePath || !content) && parameters.input && typeof parameters.input === 'string') {
+        try {
+          // 嘗試解析 JSON
+          const parsed = JSON.parse(parameters.input);
+          if (typeof parsed === 'object' && parsed !== null) {
+            if (!filePath && parsed.filePath && typeof parsed.filePath === 'string') {
+              filePath = parsed.filePath;
+              console.log(`[dockerWriteFile handler] 從 JSON input 解析到 filePath: ${filePath}`);
+            }
+            if (!content && parsed.content && typeof parsed.content === 'string') {
+              content = parsed.content;
+              console.log(`[dockerWriteFile handler] 從 JSON input 解析到 content，長度: ${String(content).length}`);
+              
+              // 確保 content 是字串
+              if (typeof content !== 'string') {
+                content = String(content);
+              }
+            } else {
+              throw new Error('❌ 無法解析 JSON input');
+            }
+          }
+        } catch (error) {
+          // 如果不是 JSON，忽略錯誤，使用原有邏輯
+          console.log(`[dockerWriteFile handler] input 不是有效的 JSON，跳過解析`);
+        }
+      }
+
+      // 3. 最終驗證
+      if (!filePath || typeof filePath !== 'string') {
+        throw new Error(`❌ 缺少有效的檔案路徑。收到: ${JSON.stringify(filePath)}`);
+      }
+      
+      if (!content || typeof content !== 'string') {
+        throw new Error(`❌ 缺少有效的檔案內容。收到類型: ${typeof content}`);
+      }
+
+      console.log(`[dockerWriteFile handler] ✅ 參數驗證通過 - 檔案: ${filePath}, 內容長度: ${content.length}`);
+
+      const result = await docker_write_file({
+        filePath,
+        content
+      }, context);
+
+      if (!result.success) {
+        return `寫入失敗: ${result.error}`;
+      }
+      return result.message || '寫入成功。';
     });
   },
-  validator: async (parameters: Record<string, unknown>) => {
-    if (!parameters.filePath || typeof parameters.filePath !== 'string') {
-      return { isValid: false, reason: 'filePath 必須是非空字串' };
+  validator: async (parameters: unknown) => {
+    console.log(`[dockerWriteFile validator] 收到參數:`, JSON.stringify(parameters, null, 2));
+    
+    if (!parameters || typeof parameters !== 'object') {
+      return {
+        isValid: false,
+        reason: '缺少必要參數'
+      };
     }
-    if (typeof parameters.content !== 'string') {
-      return { isValid: false, reason: 'content 必須是字串' };
+
+    const params = parameters as Record<string, unknown>;
+    let filePath: string | undefined;
+    let content: string | undefined;
+
+    // 簡化的驗證邏輯
+    if (params.filePath && typeof params.filePath === 'string') {
+      filePath = params.filePath;
     }
-    if (parameters.filePath.includes('..')) {
-      return { isValid: false, reason: '檔案路徑不能包含 ..' };
+    
+    if (params.content && typeof params.content === 'string') {
+      content = params.content;
     }
+
+    // 如果標準參數不完整，嘗試從 input 解析
+    if ((!filePath || !content) && params.input && typeof params.input === 'string') {
+      try {
+        const parsed = JSON.parse(params.input);
+        if (typeof parsed === 'object' && parsed !== null) {
+          if (!filePath && parsed.filePath && typeof parsed.filePath === 'string') {
+            filePath = parsed.filePath;
+          }
+          if (!content && parsed.content && typeof parsed.content === 'string') {
+            content = parsed.content;
+          }
+        }
+      } catch (error) {
+        // JSON 解析失敗，繼續使用現有的 filePath 和 content
+      }
+    }
+
+    if (!filePath || typeof filePath !== 'string') {
+      return {
+        isValid: false,
+        reason: `❌ 缺少有效的檔案路徑。請使用 { "filePath": "路徑", "content": "內容" } 格式。`
+      };
+    }
+
+    if (!content || typeof content !== 'string') {
+      return {
+        isValid: false,
+        reason: `❌ 缺少檔案內容。請使用 { "filePath": "${filePath}", "content": "內容" } 格式。`
+      };
+    }
+
+    console.log(`[dockerWriteFile validator] ✅ 參數驗證通過`);
     return { isValid: true };
   }
 };
@@ -1123,84 +1330,6 @@ export const dockerCheckPathExists: FunctionDefinition = {
   }
 };
 
-// Docker 列出目錄內容 (向後相容的版本，已棄用，建議使用 docker_ls)
-export const dockerListDirectory: FunctionDefinition = {
-  id: 'docker_list_directory',
-  schema: {
-    name: 'docker_list_directory',
-    description: '🚨 已棄用！請使用 docker_ls 替代。列出 Docker 容器內目錄的檔案和子目錄',
-    parameters: {
-      type: 'object',
-      properties: {
-        dirPath: {
-          type: 'string',
-          description: '要列出的目錄路徑（預設為當前目錄）',
-          default: '.'
-        },
-        recursive: {
-          type: 'boolean',
-          description: '是否遞迴列出子目錄內容',
-          default: false
-        },
-        showHidden: {
-          type: 'boolean',
-          description: '是否顯示隱藏檔案',
-          default: false
-        }
-      }
-    }
-  },
-  metadata: {
-    category: ToolCategory.DOCKER,
-    accessLevel: FunctionAccessLevel.RESTRICTED,
-    version: '1.1.0', // 更新版本號
-    author: 'AI Creator Team',
-    tags: ['docker', 'directory', 'list', 'deprecated', 'fixed'],
-    requiresAuth: true,
-    rateLimited: true,
-    maxCallsPerMinute: 100
-  },
-  handler: async (parameters: Record<string, unknown>, context?: unknown) => {
-    console.warn('[dockerListDirectory] ⚠️ 此函數已棄用，建議使用 docker_ls');
-    return safeToolCall('docker_list_directory', parameters, async () => {
-      // 直接調用 docker_list_directory 函數
-      const result = await docker_list_directory({
-        dirPath: (parameters.dirPath as string) || '.',
-        recursive: (parameters.recursive as boolean) || false,
-        showHidden: (parameters.showHidden as boolean) || false,
-        useTree: false // 強制禁用 tree
-      }, context);
-
-      if (!result.success) {
-        throw new Error(result.error || '列出目錄失敗');
-      }
-
-      return {
-        success: result.success,
-        files: result.files || [],
-        message: result.message,
-        error: result.error
-      };
-    });
-  },
-  validator: async (parameters: unknown) => {
-    if (!parameters || typeof parameters !== 'object') {
-      return { isValid: true }; // 允許空參數，使用預設值
-    }
-
-    const params = parameters as Record<string, unknown>;
-
-    if (params.dirPath !== undefined && typeof params.dirPath !== 'string') {
-      return {
-        isValid: false,
-        reason: '參數 "dirPath" 必須是字串'
-      };
-    }
-
-    return { isValid: true };
-  }
-};
-
 // Docker 獲取專案資訊 (This can be implemented by reading package.json)
 export const dockerGetProjectInfo: FunctionDefinition = {
   id: 'docker_get_project_info',
@@ -1241,7 +1370,7 @@ export const dockerFunctions: FunctionDefinition[] = [
   dockerWriteFile,
   dockerCheckPathExists,
   dockerGetProjectInfo,
-  dockerListDirectory, // 保持向後相容，但標記為已棄用
+  // dockerListDirectory 已移除，不再支援 input 參數
 ];
 
 /**
@@ -1258,4 +1387,4 @@ export function getDockerFunctionSchemas(): OpenAIFunctionSchema[] {
  */
 export function getDockerFunctionNames(): string[] {
   return dockerFunctions.map(fn => fn.schema.name);
-} 
+}
