@@ -205,10 +205,11 @@ export const DOCKER_LS_SCHEMA: EnhancedToolSchema = {
 };
 
 /**
- * Docker 樹狀結構工具 - 明確參數定義
+ * Docker 樹狀結構工具 - 已暫時禁用
  * 
- * ⚠️ 重要：參數名稱必須是 path，不是 directoryPath 或 input
+ * ⚠️ 此工具已暫時禁用，請使用 docker_ls 或 list_directory 替代
  */
+/*
 export const DOCKER_TREE_SCHEMA: EnhancedToolSchema = {
   name: 'docker_tree',
   description: `🐳 顯示 Docker 容器內目錄樹狀結構（標準 Unix tree 命令）。
@@ -274,6 +275,7 @@ export const DOCKER_TREE_SCHEMA: EnhancedToolSchema = {
   
   category: ToolCategory.DOCKER_OPERATIONS
 };
+*/
 
 /**
  * 檔案創建/修改工具 - 增強版
@@ -399,7 +401,7 @@ export const LIST_DIRECTORY_SCHEMA: EnhancedToolSchema = {
 export const ENHANCED_TOOL_SCHEMAS: Record<string, EnhancedToolSchema> = {
   docker_read_file: DOCKER_READ_FILE_SCHEMA,
   docker_ls: DOCKER_LS_SCHEMA,
-  docker_tree: DOCKER_TREE_SCHEMA,
+  // docker_tree: DOCKER_TREE_SCHEMA,  // 暫時禁用
   read_file: READ_FILE_SCHEMA,
   create_file: CREATE_FILE_SCHEMA,
   list_directory: LIST_DIRECTORY_SCHEMA
@@ -447,7 +449,7 @@ ${Object.values(ENHANCED_TOOL_SCHEMAS).map(schema => generateToolDescription(sch
 1. **參數名稱必須正確**：
    - docker_read_file: 使用 "filePath"，不是 "input"
    - docker_ls: 使用 "path"，不是 "directoryPath" 或 "input"
-   - docker_tree: 使用 "path"，不是 "directoryPath" 或 "input"
+   // - docker_tree: 使用 "path"，不是 "directoryPath" 或 "input" (已禁用)
 
 2. **路徑格式規範**：
    - 使用相對路徑：src/app/page.tsx
@@ -457,7 +459,7 @@ ${Object.values(ENHANCED_TOOL_SCHEMAS).map(schema => generateToolDescription(sch
 3. **工具選擇建議**：
    - 查看檔案內容：使用 docker_read_file
    - 列出目錄內容：使用 docker_ls（推薦）或 list_directory
-   - 查看專案結構：使用 docker_tree
+   - 查看專案結構：使用 docker_ls（tree 功能已禁用）
 
 4. **錯誤處理**：
    - 如果工具執行失敗，檢查參數名稱是否正確
@@ -486,8 +488,8 @@ export function suggestToolForRequest(userMessage: string): { toolName: string; 
 
   if (message.includes('結構') || message.includes('樹狀') || message.includes('tree') || message.includes('專案結構')) {
     return {
-      toolName: 'docker_tree',
-      reasoning: '用戶想要查看專案結構，建議使用 docker_tree，參數名稱是 path'
+      toolName: 'docker_ls',
+      reasoning: '用戶想要查看專案結構，建議使用 docker_ls（tree 功能已暫時禁用）'
     };
   }
 

@@ -112,9 +112,6 @@ export class OpenAIIntegration {
       docker_list_directory: (args: DockerAIToolParameters['docker_list_directory']) => 
         this.dockerAIEditor.executeDockerAITool('docker_list_directory', args),
       
-      docker_show_directory_tree: (args: DockerAIToolParameters['docker_show_directory_tree']) => 
-        this.dockerAIEditor.executeDockerAITool('docker_show_directory_tree', args),
-      
       docker_smart_monitor_and_recover: (args: DockerAIToolParameters['docker_smart_monitor_and_recover']) => 
         this.dockerAIEditor.executeDockerAITool('docker_smart_monitor_and_recover', args),
       

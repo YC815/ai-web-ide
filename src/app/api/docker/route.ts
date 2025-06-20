@@ -171,9 +171,8 @@ async function handleExecCommand(
     // 檢查是否為可能產生大量輸出的命令
     const isDangerousCommand = command.some(cmd => 
       cmd.includes('-R') || 
-      cmd.includes('--recursive') || 
-      (cmd === 'ls' && command.includes('-R'))
-    );
+      cmd.includes('--recursive')
+    ) || (command.includes('ls') && command.includes('-R'));
 
     // 構建docker exec命令
     const dockerCmd = [

@@ -165,7 +165,7 @@ export const DOCKER_AI_FUNCTION_SCHEMAS: DockerFunctionSchema[] = [
   },
   {
     name: 'docker_list_directory',
-    description: '列出Docker容器內指定目錄的內容，支援遞迴列出和隱藏檔案顯示',
+    description: '列出Docker容器內指定目錄的內容，支援遞迴列出和隱藏檔案顯示（注意：tree功能已禁用）',
     parameters: {
       type: 'object',
       properties: {
@@ -183,15 +183,16 @@ export const DOCKER_AI_FUNCTION_SCHEMAS: DockerFunctionSchema[] = [
         },
         useTree: {
           type: 'boolean',
-          description: '是否使用tree命令顯示樹狀結構'
+          description: '已禁用：設為 true 會返回錯誤'
         }
       },
       required: []
     }
   },
+  /*
   {
     name: 'docker_show_directory_tree',
-    description: '使用tree命令顯示Docker容器內目錄的樹狀結構，自動安裝tree如果不存在',
+    description: '使用tree命令顯示Docker容器內目錄的樹狀結構（已暫時禁用）',
     parameters: {
       type: 'object',
       properties: {
@@ -207,6 +208,7 @@ export const DOCKER_AI_FUNCTION_SCHEMAS: DockerFunctionSchema[] = [
       required: []
     }
   },
+  */
   {
     name: 'docker_smart_monitor_and_recover',
     description: '在Docker容器內執行智能監控與自動修復：容器健康檢查 → 分析容器內日誌 → 容器內自動重啟 → 驗證修復',
@@ -443,10 +445,10 @@ export const DOCKER_FUNCTION_SUMMARY = {
     devServer: ['docker_start_dev_server', 'docker_restart_dev_server', 'docker_kill_dev_server', 'docker_check_dev_server_status'],
     logMonitor: ['docker_read_log_tail', 'docker_search_error_logs', 'docker_get_log_files'],
     healthCheck: ['docker_check_health', 'docker_check_container_health'],
-    fileSystem: ['docker_read_file', 'docker_write_file', 'docker_list_directory', 'docker_show_directory_tree'],
+    fileSystem: ['docker_read_file', 'docker_write_file', 'docker_list_directory'],
     smart: ['docker_smart_monitor_and_recover', 'docker_get_full_status_report'],
     interaction: ['ask_user'],
-    system: ['docker_ls', 'docker_tree', 'docker_pwd']
+    system: ['docker_ls', 'docker_pwd']
   },
   description: `
 🐳 Docker AI 工具集 - 完全在容器內操作，不影響宿主機

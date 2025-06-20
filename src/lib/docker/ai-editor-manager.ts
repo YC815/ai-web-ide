@@ -373,17 +373,10 @@ export class DockerAIEditorManager {
           } as unknown as DockerAIToolResponse<T>;
         
         case 'docker_show_directory_tree':
-          const treeParams = parameters as DockerAIToolParameters['docker_show_directory_tree'];
-          this.logAction(`執行工具: ${toolName}`, { dirPath: treeParams.dirPath });
-          const treeResult = await this.dockerToolkit.fileSystem.showDirectoryTree(
-            treeParams.dirPath || '.',
-            treeParams.maxDepth
-          );
+          // Tree 功能已暫時禁用
           return {
-            success: treeResult.success,
-            data: treeResult.data ? [treeResult.data] : [],
-            message: treeResult.message,
-            error: treeResult.error
+            success: false,
+            error: 'Tree 功能已暫時禁用，請使用 docker_list_directory 替代。'
           } as unknown as DockerAIToolResponse<T>;
         
         case 'docker_smart_monitor_and_recover':

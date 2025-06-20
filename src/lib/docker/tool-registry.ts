@@ -323,13 +323,13 @@ await dockerToolkit.fileSystem.writeFile('src/components/Button.tsx', componentC
     displayName: '列出Docker容器內目錄內容',
     category: DockerToolCategory.FILE_SYSTEM,
     priority: DockerToolPriority.HIGH,
-    description: '列出Docker容器內指定目錄的內容，支援遞迴列出、隱藏檔案顯示和樹狀結構',
+    description: '列出Docker容器內指定目錄的內容，支援遞迴列出、隱藏檔案顯示（注意：tree功能已暫時禁用）',
     usage: '查看容器內專案結構、瀏覽容器內檔案、了解容器內目錄組織',
     inputSchema: {
       dirPath: 'string?', // 相對於 /app 的路徑，預設為當前目錄
       recursive: 'boolean?', // 是否遞迴列出
       showHidden: 'boolean?', // 是否顯示隱藏檔案
-      useTree: 'boolean?' // 是否使用tree命令
+      useTree: 'boolean?' // 已禁用，設定為 true 會返回錯誤
     },
     outputSchema: {
       success: 'boolean',
@@ -345,22 +345,23 @@ const files = await dockerToolkit.fileSystem.listDirectory();
 // 遞迴列出src目錄
 const srcFiles = await dockerToolkit.fileSystem.listDirectory('src', { recursive: true });
 
-// 使用tree命令顯示結構
-const treeView = await dockerToolkit.fileSystem.listDirectory('.', { useTree: true });
+// 注意：tree功能已暫時禁用
+// const treeView = await dockerToolkit.fileSystem.listDirectory('.', { useTree: true }); // 會返回錯誤
     `,
     containerRequirements: [
       '目錄路徑限制在容器內 /app 目錄內',
-      '自動安裝tree命令如果不存在'
+      'Tree功能已暫時禁用'
     ]
   },
 
+  /*
   'docker_show_directory_tree': {
     name: 'docker_show_directory_tree',
-    displayName: 'Docker容器內目錄樹狀結構',
+    displayName: 'Docker容器內目錄樹狀結構 - 已禁用',
     category: DockerToolCategory.FILE_SYSTEM,
     priority: DockerToolPriority.MEDIUM,
-    description: '使用tree命令顯示Docker容器內目錄的樹狀結構，自動安裝tree如果不存在',
-    usage: '快速查看容器內專案結構、可視化容器內目錄層次、專案概覽',
+    description: '使用tree命令顯示Docker容器內目錄的樹狀結構（已暫時禁用）',
+    usage: '此功能已暫時禁用，請使用 docker_list_directory 替代',
     inputSchema: {
       dirPath: 'string?', // 相對於 /app 的路徑，預設為當前目錄
       maxDepth: 'number?' // 最大顯示深度
@@ -373,17 +374,14 @@ const treeView = await dockerToolkit.fileSystem.listDirectory('.', { useTree: tr
       error: 'string?'
     },
     example: `
-// 顯示當前目錄樹狀結構
-const tree = await dockerToolkit.fileSystem.showDirectoryTree();
-
-// 限制深度為2層的src目錄結構
-const srcTree = await dockerToolkit.fileSystem.showDirectoryTree('src', 2);
+// 此功能已禁用，請使用 docker_list_directory 替代
+// const tree = await dockerToolkit.fileSystem.showDirectoryTree();
     `,
     containerRequirements: [
-      '目錄路徑限制在容器內 /app 目錄內',
-      '自動安裝tree命令如果不存在'
+      '此工具已暫時禁用'
     ]
   },
+  */
 
   // ====== 智能功能工具 ======
   'docker_smart_monitor_and_recover': {

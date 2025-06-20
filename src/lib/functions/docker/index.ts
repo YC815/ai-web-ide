@@ -15,6 +15,7 @@ import {
   normalizeProjectName,
   createDefaultDockerContext
 } from '../../docker/docker-context-config';
+import { createDynamicDockerToolkit, getDynamicProjectToolManager } from '@/lib/docker/dynamic-project-tools';
 
 /**
  * Docker 工具函數集合
@@ -124,12 +125,46 @@ async function safeToolCall<T>(
 
 // Helper function to get the real Docker toolkit for a given project.
 async function getRealDockerToolkit(context: unknown): Promise<DockerToolkit> {
-  let dockerContext: DockerContext | null = null;
-
   console.log(`[getRealDockerToolkit] 開始獲取 Docker 工具包，context:`, context);
 
   try {
-    // 嘗試從 context 中提取 containerId
+    // 嘗試使用動態專案工具管理器
+    if (context && typeof context === 'object') {
+      const ctx = context as Record<string, unknown>;
+
+      // 構建動態上下文
+      const dynamicContext: any = {};
+      
+      if (ctx.url && typeof ctx.url === 'string') {
+        dynamicContext.url = ctx.url;
+      }
+      
+      if (ctx.projectId && typeof ctx.projectId === 'string') {
+        dynamicContext.projectId = ctx.projectId;
+      }
+      
+      if (ctx.projectName && typeof ctx.projectName === 'string') {
+        dynamicContext.projectName = ctx.projectName;
+      }
+      
+      if (ctx.containerId && typeof ctx.containerId === 'string') {
+        dynamicContext.containerId = ctx.containerId;
+      }
+
+      // 使用動態工具管理器創建工具包
+      if (Object.keys(dynamicContext).length > 0) {
+        console.log(`[getRealDockerToolkit] 使用動態專案工具管理器:`, dynamicContext);
+        const toolkit = await createDynamicDockerToolkit(dynamicContext);
+        if (toolkit) {
+          console.log(`[getRealDockerToolkit] 成功創建動態工具包`);
+          return toolkit;
+        }
+      }
+    }
+
+    // 回退到原有邏輯
+    let dockerContext: DockerContext | null = null;
+
     if (context && typeof context === 'object') {
       const ctx = context as Record<string, unknown>;
 
@@ -165,16 +200,8 @@ async function getRealDockerToolkit(context: unknown): Promise<DockerToolkit> {
     return createDockerToolkit(dockerContext);
 
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error(`[getRealDockerToolkit] 獲取 Docker 上下文失敗: ${errorMessage}`);
-
-    // 創建一個預設的容器上下文作為後備
-    const fallbackContext = await createDefaultDockerContext();
-    console.log(`[getRealDockerToolkit] 使用後備 Docker 上下文`);
-    if (!fallbackContext) {
-      throw new Error('無法創建後備 Docker 上下文');
-    }
-    return createDockerToolkit(fallbackContext);
+    console.error(`[getRealDockerToolkit] 獲取 Docker 工具包失敗:`, error);
+    throw error;
   }
 }
 
@@ -338,11 +365,11 @@ export async function docker_ls(
     console.log(`[docker_ls] 執行命令: ${command}`);
 
     try {
-      // 使用 listDirectory 方法
+      // 使用 listDirectory 方法 - 強制禁用 tree 功能
       const result = await dockerToolkit.fileSystem.listDirectory(targetPath, {
         recursive: parameters.recursive,
         showHidden: parameters.all,
-        useTree: false
+        useTree: false  // 強制禁用 tree 功能
       });
 
       if (!result.success) {
@@ -375,8 +402,9 @@ export async function docker_ls(
 }
 
 /**
- * Docker tree - 顯示容器內目錄樹狀結構
+ * Docker tree - 顯示容器內目錄樹狀結構 - 暫時禁用
  */
+/*
 export async function docker_tree(
   parameters: {
     path?: string;     // 目錄路徑，預設為當前目錄
@@ -428,6 +456,7 @@ export async function docker_tree(
     }
   });
 }
+*/
 
 /**
  * Docker pwd - 顯示當前工作目錄
@@ -513,19 +542,33 @@ export async function docker_list_directory(
   });
 }
 
-export async function docker_read_file(filePath: string, context?: unknown): Promise<{
+export async function docker_read_file(
+  parameters: { filePath: string } | string, 
+  context?: unknown
+): Promise<{
   success: boolean;
   content?: string;
+  data?: string;
   message?: string;
   error?: string;
 }> {
-  return safeToolCall('docker_read_file', { filePath }, async () => {
+  return safeToolCall('docker_read_file', parameters, async () => {
     const dockerToolkit = await getRealDockerToolkit(context);
+    
+    // 處理參數：支援字串或物件格式
+    let filePath: string;
+    if (typeof parameters === 'string') {
+      filePath = parameters;
+    } else {
+      filePath = parameters.filePath;
+    }
+    
     const result = await dockerToolkit.fileSystem.readFile(filePath);
 
     return {
       success: result.success,
       content: result.data,
+      data: result.data, // 提供兩種格式以保持相容性
       message: result.message,
       error: result.error
     };
@@ -660,6 +703,10 @@ export async function docker_get_full_status_report(context?: unknown): Promise<
   });
 }
 
+/**
+ * Docker show directory tree - 顯示目錄樹狀結構 - 暫時禁用
+ */
+/*
 export async function docker_show_directory_tree(dirPath: string = '.', maxDepth?: number, context?: unknown): Promise<{
   success: boolean;
   tree?: string;
@@ -680,121 +727,70 @@ export async function docker_show_directory_tree(dirPath: string = '.', maxDepth
     };
   });
 }
+*/
 
 // Docker 讀取檔案 - 簡化版
 export const dockerReadFile: FunctionDefinition = {
   id: 'docker_read_file',
   schema: {
     name: 'docker_read_file',
-    description: '讀取 Docker 容器內的檔案內容。您可以提供檔案路徑，例如：src/app/page.tsx',
+    description: '讀取 Docker 容器內的檔案內容',
     parameters: {
       type: 'object',
       properties: {
-        input: {
+        filePath: {
           type: 'string',
-          description: '要讀取的檔案路徑（相對於專案根目錄）。例如：src/app/page.tsx'
+          description: '檔案路徑，相對於容器內的 /app 目錄'
         }
-      }
+      },
+      required: ['filePath']
     }
   },
   metadata: {
     category: ToolCategory.DOCKER,
     accessLevel: FunctionAccessLevel.RESTRICTED,
-    version: '4.0.0', // 新的簡化版本
+    version: '4.1.0', // 更新版本號
     author: 'AI Creator Team',
-    tags: ['docker', 'file', 'read', 'simple'],
+    tags: ['docker', 'file', 'read', 'fixed'],
     requiresAuth: true,
     rateLimited: true,
-    maxCallsPerMinute: 60
+    maxCallsPerMinute: 50
   },
   handler: async (parameters: Record<string, unknown>, context?: unknown) => {
     return safeToolCall('docker_read_file', parameters, async () => {
-      const dockerToolkit = await getRealDockerToolkit(context);
-
-      // 簡單處理參數：獲取檔案路徑
-      let filePath = '';
-      if (parameters) {
-        if (typeof parameters === 'string') {
-          filePath = parameters;
-        } else if (parameters.input) {
-          filePath = parameters.input as string;
-        } else if (parameters.filePath) {
-          filePath = parameters.filePath as string;
-        }
-      }
-
+      // 直接調用 docker_read_file 函數
+      const filePath = parameters.filePath as string;
+      
       if (!filePath) {
         return 'Error: 請提供檔案路徑';
       }
 
-      // 直接執行 cat 命令
-      const command = ['bash', '-c', `cat "${filePath}"`];
+      const result = await docker_read_file({ filePath }, context);
 
-      console.log(`[dockerReadFile] 執行命令: ${command.join(' ')}`);
-
-      try {
-        // 從 context 中獲取正確的容器 ID
-        let containerId = 'default';
-        let workingDirectory = '/app';
-
-        if (context && typeof context === 'object') {
-          const ctx = context as Record<string, unknown>;
-          if (ctx.containerId && typeof ctx.containerId === 'string') {
-            containerId = ctx.containerId;
-            console.log(`[dockerReadFile] 使用 context 中的容器 ID: ${containerId}`);
-          }
-          if (ctx.workingDirectory && typeof ctx.workingDirectory === 'string') {
-            workingDirectory = ctx.workingDirectory;
-          }
-        }
-
-        // 如果還是 default，嘗試從 dockerToolkit 獲取
-        if (containerId === 'default') {
-          const dockerContextAny = dockerToolkit as any;
-          const dockerContext = dockerContextAny.dockerContext ||
-            dockerContextAny.devServer?.dockerContext ||
-            dockerContextAny.fileSystem?.dockerContext;
-          if (dockerContext?.containerId) {
-            containerId = dockerContext.containerId;
-            workingDirectory = dockerContext.workingDirectory || workingDirectory;
-            console.log(`[dockerReadFile] 從 dockerToolkit 獲取容器 ID: ${containerId}`);
-          }
-        }
-
-        // 使用 Docker API 執行命令
-        const apiUrl = typeof window !== 'undefined'
-          ? '/api/docker'
-          : `${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/api/docker`;
-
-        const response = await fetch(apiUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'exec',
-            containerId,
-            command,
-            workingDirectory
-          })
-        });
-
-        const result = await response.json();
-
-        // 無論成功失敗都返回原始輸出
-        const output = result.stdout || result.stderr || result.error || '命令執行完成，但無輸出';
-
-        console.log(`[dockerReadFile] 命令執行結果:`, { success: result.success, hasOutput: !!output });
-
-        return output;
-
-      } catch (error) {
-        const errorMsg = `讀取檔案時發生錯誤: ${error instanceof Error ? error.message : String(error)}`;
-        console.error('[dockerReadFile]', errorMsg);
-        return errorMsg;
+      if (!result.success) {
+        return `錯誤：${result.error}`;
       }
+
+      return result.content || result.data || '檔案內容為空';
     });
   },
-  validator: async () => {
-    // 簡化驗證：接受任何參數
+  validator: async (parameters: unknown) => {
+    if (!parameters || typeof parameters !== 'object') {
+      return {
+        isValid: false,
+        reason: '缺少必要參數'
+      };
+    }
+
+    const params = parameters as Record<string, unknown>;
+
+    if (!params.filePath || typeof params.filePath !== 'string') {
+      return {
+        isValid: false,
+        reason: '參數 "filePath" 是必要的，且必須是字串'
+      };
+    }
+
     return { isValid: true };
   }
 };
@@ -804,14 +800,24 @@ export const dockerLs: FunctionDefinition = {
   id: 'docker_ls',
   schema: {
     name: 'docker_ls',
-    description: '在 Docker 容器內執行 ls 命令。您可以提供任何 ls 命令的參數，例如：. 或 src/app 或 -la src',
+    description: '在 Docker 容器內執行 ls 命令。您可以提供目錄路徑，例如：. 或 src/app',
     parameters: {
       type: 'object',
       properties: {
-        input: {
+        path: {
           type: 'string',
-          description: 'ls 命令的參數，將原封不動地放到 ls 命令後面。例如：. 或 src/app 或 -la src',
+          description: '目錄路徑，相對於容器內的 /app 目錄，預設為當前目錄',
           default: '.'
+        },
+        long: {
+          type: 'boolean',
+          description: '-l, 使用長格式顯示詳細資訊',
+          default: false
+        },
+        all: {
+          type: 'boolean',
+          description: '-a, 顯示隱藏檔案',
+          default: false
         }
       }
     }
@@ -819,102 +825,52 @@ export const dockerLs: FunctionDefinition = {
   metadata: {
     category: ToolCategory.DOCKER,
     accessLevel: FunctionAccessLevel.RESTRICTED,
-    version: '4.0.0', // 新的簡化版本
+    version: '4.1.0', // 更新版本號
     author: 'AI Creator Team',
-    tags: ['docker', 'ls', 'directory', 'simple'],
+    tags: ['docker', 'ls', 'directory', 'fixed'],
     requiresAuth: true,
     rateLimited: true,
     maxCallsPerMinute: 100
   },
   handler: async (parameters: Record<string, unknown>, context?: unknown) => {
     return safeToolCall('docker_ls', parameters, async () => {
-      const dockerToolkit = await getRealDockerToolkit(context);
+      // 直接調用已修正的 docker_ls 函數
+      const result = await docker_ls({
+        path: (parameters.path as string) || '.',
+        long: (parameters.long as boolean) || false,
+        all: (parameters.all as boolean) || false,
+        recursive: false, // FunctionDefinition 版本不支援遞歸
+        human: false
+      }, context);
 
-      // 簡單處理參數：任何東西都直接放到 ls 命令後面
-      let lsArgs = '.'; // 預設值
-      if (parameters) {
-        if (typeof parameters === 'string') {
-          lsArgs = parameters;
-        } else if (parameters.input) {
-          lsArgs = parameters.input as string;
-        } else if (parameters.path) {
-          lsArgs = parameters.path as string;
-        }
+      // 返回標準格式
+      if (!result.success) {
+        return `錯誤：${result.error}`;
       }
 
-      // 直接執行 ls 命令
-      const command = ['bash', '-c', `ls ${lsArgs}`];
-
-      console.log(`[dockerLs] 執行命令: ${command.join(' ')}`);
-
-      try {
-        // 從 context 中獲取正確的容器 ID
-        let containerId = 'default';
-        let workingDirectory = '/app';
-
-        if (context && typeof context === 'object') {
-          const ctx = context as Record<string, unknown>;
-          if (ctx.containerId && typeof ctx.containerId === 'string') {
-            containerId = ctx.containerId;
-            console.log(`[dockerLs] 使用 context 中的容器 ID: ${containerId}`);
-          }
-          if (ctx.workingDirectory && typeof ctx.workingDirectory === 'string') {
-            workingDirectory = ctx.workingDirectory;
-          }
-        }
-
-        // 如果還是 default，嘗試從 dockerToolkit 獲取
-        if (containerId === 'default') {
-          const dockerContextAny = dockerToolkit as any;
-          const dockerContext = dockerContextAny.dockerContext ||
-            dockerContextAny.devServer?.dockerContext ||
-            dockerContextAny.fileSystem?.dockerContext;
-          if (dockerContext?.containerId) {
-            containerId = dockerContext.containerId;
-            workingDirectory = dockerContext.workingDirectory || workingDirectory;
-            console.log(`[dockerLs] 從 dockerToolkit 獲取容器 ID: ${containerId}`);
-          }
-        }
-
-        // 使用 Docker API 執行命令
-        const apiUrl = typeof window !== 'undefined'
-          ? '/api/docker'
-          : `${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/api/docker`;
-
-        const response = await fetch(apiUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'exec',
-            containerId,
-            command,
-            workingDirectory
-          })
-        });
-
-        const result = await response.json();
-
-        // 無論成功失敗都返回原始輸出
-        const output = result.stdout || result.stderr || result.error || '命令執行完成，但無輸出';
-
-        console.log(`[dockerLs] 命令執行結果:`, { success: result.success, output });
-
-        return output;
-
-      } catch (error) {
-        const errorMsg = `執行 ls 命令時發生錯誤: ${error instanceof Error ? error.message : String(error)}`;
-        console.error('[dockerLs]', errorMsg);
-        return errorMsg;
-      }
+      return result.output || result.files?.join('\n') || '目錄為空';
     });
   },
-  validator: async () => {
-    // 簡化驗證：接受任何參數
+  validator: async (parameters: unknown) => {
+    if (!parameters || typeof parameters !== 'object') {
+      return { isValid: true }; // 允許空參數，使用預設值
+    }
+
+    const params = parameters as Record<string, unknown>;
+
+    if (params.path !== undefined && typeof params.path !== 'string') {
+      return {
+        isValid: false,
+        reason: '參數 "path" 必須是字串'
+      };
+    }
+
     return { isValid: true };
   }
 };
 
-// Docker tree 命令 - 簡化版，直接執行原始命令
+// Docker tree 命令 - 簡化版，直接執行原始命令 - 暫時禁用
+/*
 export const dockerTree: FunctionDefinition = {
   id: 'docker_tree',
   schema: {
@@ -941,61 +897,71 @@ export const dockerTree: FunctionDefinition = {
     rateLimited: true,
     maxCallsPerMinute: 50
   },
-  handler: async (parameters: Record<string, unknown>, context?: unknown) => {
+  implementation: async (parameters: Record<string, unknown>, context?: unknown) => {
     return safeToolCall('docker_tree', parameters, async () => {
-      const dockerToolkit = await getRealDockerToolkit(context);
-
+      console.log(`[dockerTree] 執行參數:`, parameters);
+      
       // 簡單處理參數：任何東西都直接放到 tree 命令後面
       let treeArgs = '.'; // 預設值
-      if (parameters) {
-        if (typeof parameters === 'string') {
-          treeArgs = parameters;
-        } else if (parameters.input) {
-          treeArgs = parameters.input as string;
-        } else if (parameters.path) {
-          treeArgs = parameters.path as string;
-        }
+      
+      if (typeof parameters === 'string') {
+        treeArgs = parameters;
+      } else if (parameters.input && typeof parameters.input === 'string') {
+        treeArgs = parameters.input as string;
+      } else if (parameters.path && typeof parameters.path === 'string') {
+        treeArgs = parameters.path as string;
       }
-
+      
+      console.log(`[dockerTree] 處理後的參數: ${treeArgs}`);
+      
       // 直接執行 tree 命令，自動排除 node_modules
       const command = ['bash', '-c', `tree -I node_modules ${treeArgs} || (echo "安裝 tree 命令中..." && (apk add --no-cache tree || apt-get update && apt-get install -y tree || yum install -y tree) && tree -I node_modules ${treeArgs}) || find ${treeArgs} -name node_modules -prune -o -type f -print | head -50`];
-
+      
       console.log(`[dockerTree] 執行命令: tree -I node_modules ${treeArgs}`);
-
+      
+      let containerId: string | undefined;
+      
+      // 嘗試從 context 獲取容器 ID
+      if (context && typeof context === 'object') {
+        const ctx = context as Record<string, unknown>;
+        if (ctx.containerId && typeof ctx.containerId === 'string') {
+          containerId = ctx.containerId;
+          console.log(`[dockerTree] 使用 context 中的容器 ID: ${containerId}`);
+        } else if (ctx.projectName && typeof ctx.projectName === 'string') {
+          // 如果有專案名稱，嘗試獲取對應的容器
+          try {
+            const dockerContext = getDockerContextByName(ctx.projectName as string);
+            if (dockerContext) {
+              containerId = dockerContext.containerId;
+              console.log(`[dockerTree] 通過專案名稱獲取容器 ID: ${containerId}`);
+            }
+          } catch (error) {
+            console.warn(`[dockerTree] 無法通過專案名稱獲取容器:`, error);
+          }
+        }
+      }
+      
+      // 如果沒有從 context 獲取到，嘗試使用 dockerToolkit
+      if (!containerId) {
+        const dockerToolkit = await getRealDockerToolkit(context);
+        containerId = (dockerToolkit as any)?.dockerContext?.containerId;
+        console.log(`[dockerTree] 從 dockerToolkit 獲取容器 ID: ${containerId}`);
+      }
+      
+      if (!containerId) {
+        return {
+          success: false,
+          error: '無法獲取 Docker 容器 ID',
+          message: '請確保在正確的專案上下文中執行此命令'
+        };
+      }
+      
       try {
-        // 從 context 中獲取正確的容器 ID
-        let containerId = 'default';
-        let workingDirectory = '/app';
-
-        if (context && typeof context === 'object') {
-          const ctx = context as Record<string, unknown>;
-          if (ctx.containerId && typeof ctx.containerId === 'string') {
-            containerId = ctx.containerId;
-            console.log(`[dockerTree] 使用 context 中的容器 ID: ${containerId}`);
-          }
-          if (ctx.workingDirectory && typeof ctx.workingDirectory === 'string') {
-            workingDirectory = ctx.workingDirectory;
-          }
-        }
-
-        // 如果還是 default，嘗試從 dockerToolkit 獲取
-        if (containerId === 'default') {
-          const dockerContextAny = dockerToolkit as any;
-          const dockerContext = dockerContextAny.dockerContext ||
-            dockerContextAny.devServer?.dockerContext ||
-            dockerContextAny.fileSystem?.dockerContext;
-          if (dockerContext?.containerId) {
-            containerId = dockerContext.containerId;
-            workingDirectory = dockerContext.workingDirectory || workingDirectory;
-            console.log(`[dockerTree] 從 dockerToolkit 獲取容器 ID: ${containerId}`);
-          }
-        }
-
-        // 使用 Docker API 執行命令
-        const apiUrl = typeof window !== 'undefined'
+        // 構建 API URL
+        const apiUrl = typeof window !== 'undefined' 
           ? '/api/docker'
           : `${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/api/docker`;
-
+        
         const response = await fetch(apiUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1003,31 +969,34 @@ export const dockerTree: FunctionDefinition = {
             action: 'exec',
             containerId,
             command,
-            workingDirectory
+            workingDirectory: '/app'
           })
         });
-
+        
         const result = await response.json();
-
-        // 無論成功失敗都返回原始輸出
-        const output = result.stdout || result.stderr || result.error || '命令執行完成，但無輸出';
-
+        const output = result.stdout || result.stderr || '';
+        
         console.log(`[dockerTree] 命令執行結果:`, { success: result.success, output });
-
-        return output;
-
+        
+        return {
+          success: result.success,
+          output,
+          message: result.success ? `成功執行 tree 命令` : `執行失敗: ${result.error}`,
+          error: result.success ? undefined : result.error
+        };
       } catch (error) {
         const errorMsg = `執行 tree 命令時發生錯誤: ${error instanceof Error ? error.message : String(error)}`;
         console.error('[dockerTree]', errorMsg);
-        return errorMsg;
+        return {
+          success: false,
+          error: errorMsg,
+          message: '執行 tree 命令失敗'
+        };
       }
     });
-  },
-  validator: async () => {
-    // 簡化驗證：接受任何參數
-    return { isValid: true };
   }
 };
+*/
 
 // Docker pwd - 顯示當前工作目錄
 export const dockerPwd: FunctionDefinition = {
@@ -1163,10 +1132,20 @@ export const dockerListDirectory: FunctionDefinition = {
     parameters: {
       type: 'object',
       properties: {
-        input: {
+        dirPath: {
           type: 'string',
           description: '要列出的目錄路徑（預設為當前目錄）',
           default: '.'
+        },
+        recursive: {
+          type: 'boolean',
+          description: '是否遞迴列出子目錄內容',
+          default: false
+        },
+        showHidden: {
+          type: 'boolean',
+          description: '是否顯示隱藏檔案',
+          default: false
         }
       }
     }
@@ -1174,17 +1153,23 @@ export const dockerListDirectory: FunctionDefinition = {
   metadata: {
     category: ToolCategory.DOCKER,
     accessLevel: FunctionAccessLevel.RESTRICTED,
-    version: '1.0.0',
+    version: '1.1.0', // 更新版本號
     author: 'AI Creator Team',
-    tags: ['docker', 'directory', 'list', 'deprecated'],
+    tags: ['docker', 'directory', 'list', 'deprecated', 'fixed'],
     requiresAuth: true,
     rateLimited: true,
     maxCallsPerMinute: 100
   },
-  handler: async (parameters: { input?: string }, context?: unknown) => {
+  handler: async (parameters: Record<string, unknown>, context?: unknown) => {
     console.warn('[dockerListDirectory] ⚠️ 此函數已棄用，建議使用 docker_ls');
     return safeToolCall('docker_list_directory', parameters, async () => {
-      const result = await docker_list_directory(parameters.input || '.', context);
+      // 直接調用 docker_list_directory 函數
+      const result = await docker_list_directory({
+        dirPath: (parameters.dirPath as string) || '.',
+        recursive: (parameters.recursive as boolean) || false,
+        showHidden: (parameters.showHidden as boolean) || false,
+        useTree: false // 強制禁用 tree
+      }, context);
 
       if (!result.success) {
         throw new Error(result.error || '列出目錄失敗');
@@ -1205,10 +1190,10 @@ export const dockerListDirectory: FunctionDefinition = {
 
     const params = parameters as Record<string, unknown>;
 
-    if (params.input !== undefined && typeof params.input !== 'string') {
+    if (params.dirPath !== undefined && typeof params.dirPath !== 'string') {
       return {
         isValid: false,
-        reason: '參數 "input" 必須是字串'
+        reason: '參數 "dirPath" 必須是字串'
       };
     }
 
@@ -1251,7 +1236,7 @@ export const dockerGetProjectInfo: FunctionDefinition = {
 export const dockerFunctions: FunctionDefinition[] = [
   dockerReadFile,
   dockerLs,        // 新的標準 ls 命令
-  dockerTree,      // 新的標準 tree 命令  
+  // dockerTree,      // 新的標準 tree 命令 - 暫時禁用  
   dockerPwd,       // 新的標準 pwd 命令
   dockerWriteFile,
   dockerCheckPathExists,

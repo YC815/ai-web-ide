@@ -748,7 +748,7 @@ export class DockerFileSystemTool {
   }
 
   /**
-   * 列出Docker容器內目錄內容（需安全驗證）- 限制在workspace內，排除node_modules
+   * 列出Docker容器內目錄內容（需安全驗證）- 限制在workspace內，並排除大型目錄
    */
   async listDirectory(dirPath: string = '.', options?: { 
     recursive?: boolean; 
@@ -758,122 +758,88 @@ export class DockerFileSystemTool {
     try {
       const { recursive = false, showHidden = false, useTree = false } = options || {};
       
-      // 修復路徑處理：確保在正確的工作目錄下執行
-      const baseDir = this.dockerContext.workingDirectory || '/app';
-      let safeDirPath = this.sanitizePath(dirPath);
+      const baseDir = this.dockerContext.workingDirectory || '/app/workspace';
+      const sanitizedRelativePath = dirPath.replace(/^\//, '').replace(/\.\./g, '');
+      const safeDirPath = this.sanitizePath(sanitizedRelativePath) || '.';
       
-      // 如果提供的路徑是相對路徑，則在基礎目錄下執行命令，但保持相對路徑
-      // 不直接拼接路徑，而是通過 cd 命令切換目錄
-      if (!safeDirPath.startsWith('/')) {
-        // 保持相對路徑，稍後通過 cd 命令處理
-      } else {
-        // 如果是絕對路徑，檢查是否在安全範圍內
-        if (!safeDirPath.startsWith('/app')) {
-          safeDirPath = '/app' + safeDirPath;
-        }
-      }
-      
-      // 簡化的安全驗證
+      console.log(`[DockerFileSystemTool] listDirectory - Base: ${baseDir}, Relative: ${safeDirPath}, Options:`, options);
+
       if (!this.isValidDirectoryPath(safeDirPath)) {
-        return {
+        return { 
           success: false,
-          error: `不安全的目錄路徑: ${safeDirPath}`
+          error: '無效或不安全的目錄路徑。' 
         };
       }
+      
+      // 註解掉 tree 功能，暫時禁用
+      if (useTree) {
+        return {
+          success: false,
+          error: 'Tree 功能已暫時禁用，請使用一般列表模式。'
+        };
+      }
+
+      // 使用簡單的 ls 命令來列出目錄
+      const excludeList = ['node_modules', '.next', '.git', 'dist', 'build', '.vscode', 'coverage', '.nyc_output'];
+      const excludePattern = excludeList.map(dir => `! -name "${dir}"`).join(' ');
       
       let command: string[];
-      
-      if (useTree) {
-        // 使用tree命令，強制排除node_modules並限制深度
-        const treeArgs = ['-I', 'node_modules|.next|.git|dist|build'];
-        if (!recursive) treeArgs.push('-L', '3'); // 限制深度為3層
-        if (showHidden) treeArgs.push('-a');
-        
+      if (recursive) {
+        // 遞歸列出，但排除指定目錄
         command = ['bash', '-c', 
-          `cd "${baseDir}" && (` +
-          `tree ${treeArgs.join(' ')} "${safeDirPath}" | head -200 || ` + // 限制最多200行輸出
-          `(command -v apt-get >/dev/null 2>&1 && apt-get update && apt-get install -y tree && tree ${treeArgs.join(' ')} "${safeDirPath}" | head -200) || ` +
-          `(command -v apk >/dev/null 2>&1 && apk add --no-cache tree && tree ${treeArgs.join(' ')} "${safeDirPath}" | head -200) || ` +
-          `echo "無法安裝 tree 命令，請使用標準 ls 列出"` +
-          `)`
+          `cd "${baseDir}" && find "${safeDirPath}" -type f ${excludePattern} | head -200 | sort`
         ];
       } else {
-        // 使用ls命令，排除node_modules
-        if (recursive) {
-          // 遞迴列出，明確排除node_modules等大型目錄
-          command = ['bash', '-c', `cd "${baseDir}" && find "${safeDirPath}" -maxdepth 3 -name node_modules -prune -o -name .next -prune -o -name .git -prune -o -name dist -prune -o -name build -prune -o -print | head -100`];
-        } else {
-          // 非遞迴列出
-          if (showHidden) {
-            command = ['bash', '-c', `cd "${baseDir}" && ls -la "${safeDirPath}" | grep -v node_modules | head -50`];
-          } else {
-            command = ['bash', '-c', `cd "${baseDir}" && ls -l "${safeDirPath}" | grep -v node_modules | head -50`];
-          }
-        }
+        // 只列出當前目錄
+        const lsOptions = showHidden ? '-la' : '-l';
+        command = ['bash', '-c', 
+          `cd "${baseDir}" && ls ${lsOptions} "${safeDirPath}" | grep -v "^total" | head -100`
+        ];
       }
 
-      console.log(`🗂️ [listDirectory] 執行命令 (限制workspace):`, command.join(' '));
+      console.log('[DockerFileSystemTool] Executing command:', command.join(' '));
+      const execResult = await this.executeInContainer(command);
 
-      const result = await this.executeInContainer(command);
-
-      if (!result.success) {
-        console.error(`❌ [listDirectory] 命令執行失敗:`, result.error);
+      if (!execResult.success) {
         return {
           success: false,
-          error: result.error || '列出目錄失敗'
+          error: `命令執行失敗: ${execResult.error}`
         };
       }
-
-      const output = result.containerOutput || '';
       
-      // 早期截斷處理，避免過長輸出
-      const lines = output.split('\n');
-      let files = lines.filter(line => line.trim() && !line.includes('node_modules'));
-
-      // 處理 ls -l 格式的輸出
-      if (output.includes('total ') && !useTree) {
-        files = files
-          .filter(line => !line.startsWith('total '))
-          .map(line => {
-            const parts = line.trim().split(/\s+/);
-            return parts[parts.length - 1];
-          })
-          .filter(name => name && name !== '.' && name !== '..');
+      const fileList = execResult.containerOutput 
+        ? execResult.containerOutput.split('\n').filter(line => line.trim() !== '')
+        : [];
+        
+      if (fileList.length === 0) {
+        return { 
+          success: true,
+          data: ['目錄為空或已被過濾。'] 
+        };
       }
-
-      // 嚴格限制輸出長度 - 防止context爆炸
-      if (files.length > 100) {
-        files = files.slice(0, 100);
-        files.push('⚠️ 輸出已截斷至100項以避免context爆炸');
-        files.push('✨ 使用更具體的路徑來查看特定目錄');
-      }
-
-      // 移除包含敏感資訊的行
-      files = files.filter(file => 
-        !file.includes('node_modules') && 
-        !file.includes('.next') && 
-        !file.includes('.git') &&
-        file.length < 200 // 避免單行過長
-      );
-
-      console.log(`✅ [listDirectory] 成功列出workspace目錄 (已過濾):`, { 
-        path: safeDirPath, 
-        fileCount: files.length
-      });
-
-      return {
+      
+      return { 
         success: true,
-        data: files,
-        message: `成功列出workspace目錄: ${safeDirPath} (已排除node_modules等)`,
-        containerOutput: files.join('\n') // 使用過濾後的輸出
+        data: fileList 
       };
-    } catch (error) {
-      console.error(`❌ [listDirectory] 異常:`, error);
-      return {
+    } catch (error: unknown) {
+      console.error(`[DockerFileSystemTool] listDirectory 發生錯誤:`, error);
+      return { 
         success: false,
-        error: `列出Docker容器內目錄失敗: ${error instanceof Error ? error.message : 'Unknown error'}`
+        error: `處理目錄列表時發生異常: ${error instanceof Error ? error.message : 'Unknown error'}` 
       };
     }
+  }
+
+  /**
+   * 顯示目錄的樹狀結構 - 暫時禁用
+   */
+  async showDirectoryTree(_dirPath: string = '.'): Promise<DockerToolResponse<string[]>> {
+    // 暫時禁用 tree 功能
+    return {
+      success: false,
+      error: 'Tree 功能已暫時禁用，請使用 listDirectory 方法。'
+    };
   }
 
   /**
@@ -915,77 +881,6 @@ export class DockerFileSystemTool {
     }
     
     return safePath;
-  }
-
-  /**
-   * 使用tree命令顯示Docker容器內目錄樹狀結構 - 限制workspace，排除node_modules
-   */
-  async showDirectoryTree(dirPath: string = '.', maxDepth?: number): Promise<DockerToolResponse<string>> {
-    // 修復路徑處理
-    const baseDir = this.dockerContext.workingDirectory || '/app';
-    let sanitizedPath = this.sanitizePath(dirPath);
-    
-    if (!this.isValidDirectoryPath(sanitizedPath)) {
-      return { success: false, error: '不安全的目錄路徑' };
-    }
-
-    // 設定安全的預設深度和排除規則
-    const safeMaxDepth = maxDepth && maxDepth > 0 && maxDepth <= 4 ? maxDepth : 3;
-    const excludePattern = 'node_modules|.next|.git|dist|build|coverage|.nyc_output';
-    
-    const command = `cd "${baseDir}" && tree -L ${safeMaxDepth} -I "${excludePattern}" -F --dirsfirst "${sanitizedPath}" | head -100`;
-
-    let result = await this.executeInContainer(['bash', '-c', command]);
-
-    // 如果第一次執行失敗，嘗試安裝 tree 並重試
-    if (!result.success && result.error?.includes('tree: not found')) {
-      console.log('tree 命令未找到，嘗試自動安裝...');
-      
-      // 嘗試安裝 tree
-      const installResult = await this.executeInContainer([
-        'bash', 
-        '-c', 
-        '(command -v apk >/dev/null 2>&1 && apk add --no-cache tree) || (command -v apt-get >/dev/null 2>&1 && apt-get update && apt-get install -y tree) || (command -v yum >/dev/null 2>&1 && yum install -y tree) || echo "無法安裝tree命令"'
-      ]);
-
-      if (installResult.success) {
-        console.log('tree 安裝成功，重試命令...');
-        // 再次執行 tree 命令
-        const newCommand = `cd "${baseDir}" && tree -L ${safeMaxDepth} -I "${excludePattern}" -F --dirsfirst "${sanitizedPath}" | head -100`;
-        result = await this.executeInContainer(['bash', '-c', newCommand]);
-      } else {
-        result.error += ` | 自動安裝 tree 失敗: ${installResult.error}`;
-      }
-    }
-    
-    // 如果 tree 還是失敗，使用 find 作為備用方案
-    if (!result.success) {
-      console.warn('tree 命令執行失敗，使用 find 作為備用方案...');
-      const findCommand = `find "${sanitizedPath}" -maxdepth ${safeMaxDepth} -type d | grep -v -E "${excludePattern}" | head -50 | sort`;
-      const findResult = await this.executeInContainer(['bash', '-c', findCommand]);
-      
-      if (findResult.success && findResult.containerOutput) {
-        return {
-          success: true,
-          data: `🌳 ${sanitizedPath} 目錄結構 (使用find替代):\n${findResult.containerOutput}`,
-          message: '使用 find 替代 tree 成功 - 已排除node_modules等大型目錄'
-        };
-      }
-      result.error += ` | find 備用方案也失敗了: ${findResult.error}`;
-    }
-
-    // 過濾輸出，確保不包含敏感內容
-    let outputData = result.containerOutput || '';
-    if (outputData.length > 5000) { // 限制輸出長度
-      outputData = outputData.substring(0, 5000) + '\n⚠️ 輸出已截斷以避免context爆炸';
-    }
-    
-    return {
-      success: result.success,
-      data: result.success ? `🌳 ${sanitizedPath} 目錄結構:\n${outputData}` : outputData,
-      error: result.error,
-      message: result.success ? `${sanitizedPath} 目錄樹狀結構已生成 (已排除node_modules等)` : undefined
-    };
   }
 
   /**
