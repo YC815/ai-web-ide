@@ -29,7 +29,7 @@ export const DOCKER_AI_FUNCTION_SCHEMAS: DockerFunctionSchema[] = [
       type: 'object',
       properties: {
         reason: {
-          type: 'string',
+          type: ['string', 'null'],
           description: '重啟原因（可選），有助於日誌記錄和問題追蹤'
         }
       },
@@ -61,17 +61,17 @@ export const DOCKER_AI_FUNCTION_SCHEMAS: DockerFunctionSchema[] = [
       type: 'object',
       properties: {
         lines: {
-          type: 'number',
+          type: ['number', 'null'],
           description: '讀取行數，預設3000行，最大10000行',
           default: 3000
         },
         logFile: {
-          type: 'string',
+          type: ['string', 'null'],
           description: '日誌檔案名稱，預設dev.log',
           default: 'dev.log'
         },
         keyword: {
-          type: 'string',
+          type: ['string', 'null'],
           description: '關鍵字搜尋（可選），用於過濾特定內容'
         }
       },
@@ -85,12 +85,12 @@ export const DOCKER_AI_FUNCTION_SCHEMAS: DockerFunctionSchema[] = [
       type: 'object',
       properties: {
         keyword: {
-          type: 'string',
+          type: ['string', 'null'],
           description: '錯誤關鍵字，預設為"Error"',
           default: 'Error'
         },
         lines: {
-          type: 'number',
+          type: ['number', 'null'],
           description: '搜尋範圍行數，預設1000行',
           default: 1000
         }
@@ -114,7 +114,7 @@ export const DOCKER_AI_FUNCTION_SCHEMAS: DockerFunctionSchema[] = [
       type: 'object',
       properties: {
         port: {
-          type: 'number',
+          type: ['number', 'null'],
           description: '要檢查的端口號，預設3000',
           default: 3000
         }
@@ -170,19 +170,19 @@ export const DOCKER_AI_FUNCTION_SCHEMAS: DockerFunctionSchema[] = [
       type: 'object',
       properties: {
         dirPath: {
-          type: 'string',
+          type: ['string', 'null'],
           description: '目錄路徑，相對於容器內的 /app 目錄，預設為當前目錄'
         },
         recursive: {
-          type: 'boolean',
+          type: ['boolean', 'null'],
           description: '是否遞迴列出子目錄內容'
         },
         showHidden: {
-          type: 'boolean',
+          type: ['boolean', 'null'],
           description: '是否顯示隱藏檔案（以.開頭的檔案）'
         },
         useTree: {
-          type: 'boolean',
+          type: ['boolean', 'null'],
           description: '已禁用：設為 true 會返回錯誤'
         }
       },
@@ -238,7 +238,7 @@ export const DOCKER_AI_FUNCTION_SCHEMAS: DockerFunctionSchema[] = [
           description: '提示訊息'
         },
         options: {
-          type: 'array',
+          type: ['array', 'null'],
           items: {
             type: 'string'
           },

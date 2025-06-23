@@ -311,7 +311,7 @@ export class StrictDockerTools {
             type: 'object',
             properties: {
               dirPath: {
-                type: 'string',
+                type: ['string', 'null'],
                 description: '要列出的目錄路徑（相對於專案根目錄）',
                 default: '.'
               }
@@ -332,7 +332,7 @@ export class StrictDockerTools {
                 description: '搜尋模式（支援萬用字元）'
               },
               searchPath: {
-                type: 'string',
+                type: ['string', 'null'],
                 description: '搜尋路徑（相對於專案根目錄）',
                 default: '.'
               }

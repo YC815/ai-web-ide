@@ -21,6 +21,7 @@ import { logger } from '@/lib/logger';
 import { AI_ASSISTANT_NAME } from '@/lib/constants';
 import { allTools, executeToolById } from '@/lib/functions';
 import { DockerContext } from '@/lib/docker/tools';
+import { z } from 'zod';
 
 // 修復：定義自定義工具介面以匹配我們的工具系統
 interface CustomTool {
@@ -114,13 +115,55 @@ function toLangChainTool(
   context: { containerId: string; projectName?: string; workingDirectory?: string; }
 ): DynamicTool {
   
-  // 使用原始的工具 schema，不進行參數名稱轉換
-  const toolSchema = { ...tool.schema };
+  const properties = tool.schema.parameters.properties;
+  const required = tool.schema.parameters.required || [];
+  const shape: Record<string, z.ZodType<any, any>> = {};
+
+  // 徹底重構 schema 生成邏輯
+  for (const key in properties) {
+    const prop = properties[key] as any;
+    let fieldSchema: z.ZodType<any, any>;
+    
+    const propType = Array.isArray(prop.type) ? prop.type[0] : prop.type;
+
+    switch (propType) {
+      case 'string':
+        fieldSchema = z.string();
+        break;
+      case 'boolean':
+        fieldSchema = z.boolean();
+        break;
+      case 'number':
+        fieldSchema = z.number();
+        break;
+      default:
+        fieldSchema = z.any();
+    }
+
+    if (prop.description) {
+      fieldSchema = fieldSchema.describe(prop.description);
+    }
+    
+    // 關鍵修正：只要不是必填項，就必須是 optional and nullable
+    if (!required.includes(key)) {
+      fieldSchema = fieldSchema.optional().nullable();
+    }
+
+    shape[key] = fieldSchema;
+  }
+  
+  // 針對 docker_read_file 等工具可能被 AI 誤用 'input' 的情況進行最終修正
+  if (['docker_read_file', 'docker_ls', 'docker_write_file'].includes(tool.id) && !shape['input']) {
+    shape['input'] = z.string().optional().nullable().describe('備用參數，AI 可能會錯誤地使用 "input" 而不是正確的參數名');
+  }
+
+  const zodSchema = z.object(shape);
   
   // 創建 DynamicTool
   return new DynamicTool({
     name: tool.id,
     description: tool.schema.description,
+    schema: zodSchema, // 傳遞動態生成的 Zod schema
     func: async (args: any) => { // 接受任何類型的參數
       let processedArgs: Record<string, unknown>;
       
