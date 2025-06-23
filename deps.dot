@@ -1,0 +1,325 @@
+strict digraph "dependency-cruiser output"{
+    rankdir="LR" splines="true" overlap="false" nodesep="0.16" ranksep="0.18" fontname="Helvetica-bold" fontsize="9" style="rounded,bold,filled" fillcolor="#ffffff" compound="true"
+    node [shape="box" style="rounded, filled" height="0.2" color="black" fillcolor="#ffffcc" fontcolor="black" fontname="Helvetica" fontsize="9"]
+    edge [arrowhead="normal" arrowsize="0.6" penwidth="2.0" color="#00000033" fontname="Helvetica" fontsize="9"]
+
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/app" {label="app" subgraph "cluster_src/app/admin" {label="admin" subgraph "cluster_src/app/admin/logs" {label="logs" "src/app/admin/logs/page.tsx" [label=<page.tsx> tooltip="no-orphans" URL="src/app/admin/logs/page.tsx" fillcolor="#ccffcc" fontcolor="orange" color="orange"] } } } }
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/app" {label="app" subgraph "cluster_src/app/api" {label="api" subgraph "cluster_src/app/api/admin" {label="admin" subgraph "cluster_src/app/api/admin/logs" {label="logs" "src/app/api/admin/logs/route.ts" [label=<route.ts> tooltip="route.ts" URL="src/app/api/admin/logs/route.ts" fillcolor="#ddfeff"] } } } } }
+    "src/app/api/admin/logs/route.ts" -> "src/lib/core/logger.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/app" {label="app" subgraph "cluster_src/app/api" {label="api" subgraph "cluster_src/app/api/agent" {label="agent" "src/app/api/agent/route.ts" [label=<route.ts> tooltip="route.ts" URL="src/app/api/agent/route.ts" fillcolor="#ddfeff"] } } } }
+    "src/app/api/agent/route.ts" -> "src/lib/ai/index.ts"
+    "src/app/api/agent/route.ts" -> "src/lib/logger.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/app" {label="app" subgraph "cluster_src/app/api" {label="api" subgraph "cluster_src/app/api/chat-agent" {label="chat-agent" "src/app/api/chat-agent/route.ts" [label=<route.ts> tooltip="route.ts" URL="src/app/api/chat-agent/route.ts" fillcolor="#ddfeff"] } } } }
+    "src/app/api/chat-agent/route.ts" -> "src/lib/ai/secure-chat-agent-integration.ts"
+    "src/app/api/chat-agent/route.ts" -> "src/lib/logger.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/app" {label="app" subgraph "cluster_src/app/api" {label="api" subgraph "cluster_src/app/api/chat-enhanced" {label="chat-enhanced" "src/app/api/chat-enhanced/route.ts" [label=<route.ts> tooltip="route.ts" URL="src/app/api/chat-enhanced/route.ts" fillcolor="#ddfeff"] } } } }
+    "src/app/api/chat-enhanced/route.ts" -> "src/lib/ai/langchain-chat-engine.ts"
+    "src/app/api/chat-enhanced/route.ts" -> "src/lib/chat/chat-context-manager.ts"
+    "src/app/api/chat-enhanced/route.ts" -> "src/lib/docker/docker-context-config.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/app" {label="app" subgraph "cluster_src/app/api" {label="api" subgraph "cluster_src/app/api/chat-with-tools" {label="chat-with-tools" "src/app/api/chat-with-tools/route.ts" [label=<route.ts> tooltip="route.ts" URL="src/app/api/chat-with-tools/route.ts" fillcolor="#ddfeff"] } } } }
+    "src/app/api/chat-with-tools/route.ts" -> "src/lib/ai/openai.ts"
+    "src/app/api/chat-with-tools/route.ts" -> "src/lib/core/logger.ts"
+    "src/app/api/chat-with-tools/route.ts" -> "src/lib/docker/config-manager.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/app" {label="app" subgraph "cluster_src/app/api" {label="api" subgraph "cluster_src/app/api/chat" {label="chat" "src/app/api/chat/ai-project-assistant.ts" [label=<ai-project-assistant.ts> tooltip="ai-project-assistant.ts" URL="src/app/api/chat/ai-project-assistant.ts" fillcolor="#ddfeff"] } } } }
+    "src/app/api/chat/ai-project-assistant.ts" -> "src/lib/ai/context-manager.ts"
+    "src/app/api/chat/ai-project-assistant.ts" -> "src/lib/ai/prompt-builder.ts"
+    "src/app/api/chat/ai-project-assistant.ts" -> "src/lib/docker/tools.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/app" {label="app" subgraph "cluster_src/app/api" {label="api" subgraph "cluster_src/app/api/chat" {label="chat" "src/app/api/chat/langchain-route.ts" [label=<langchain-route.ts> tooltip="langchain-route.ts" URL="src/app/api/chat/langchain-route.ts" fillcolor="#ddfeff"] } } } }
+    "src/app/api/chat/langchain-route.ts" -> "src/lib/ai/context-manager.ts"
+    "src/app/api/chat/langchain-route.ts" -> "src/lib/ai/langchain-chat-engine.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/app" {label="app" subgraph "cluster_src/app/api" {label="api" subgraph "cluster_src/app/api/chat" {label="chat" "src/app/api/chat/route.ts" [label=<route.ts> tooltip="route.ts" URL="src/app/api/chat/route.ts" fillcolor="#ddfeff"] } } } }
+    "src/app/api/chat/route.ts" -> "src/lib/ai/langchain-chat-engine.ts"
+    "src/app/api/chat/route.ts" -> "src/app/api/chat/ai-project-assistant.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/app" {label="app" subgraph "cluster_src/app/api" {label="api" subgraph "cluster_src/app/api/chat" {label="chat" "src/app/api/chat/simple-route.ts" [label=<simple-route.ts> tooltip="simple-route.ts" URL="src/app/api/chat/simple-route.ts" fillcolor="#ddfeff"] } } } }
+    "src/app/api/chat/simple-route.ts" -> "src/lib/ai/simple-langchain-engine.ts"
+    "src/app/api/chat/simple-route.ts" -> "src/lib/logger.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/app" {label="app" subgraph "cluster_src/app/api" {label="api" subgraph "cluster_src/app/api/chat" {label="chat" "src/app/api/chat/unified-route.ts" [label=<unified-route.ts> tooltip="no-orphans" URL="src/app/api/chat/unified-route.ts" fillcolor="#ccffcc" fontcolor="orange" color="orange"] } } } }
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/app" {label="app" subgraph "cluster_src/app/api" {label="api" subgraph "cluster_src/app/api/containers" {label="containers" "src/app/api/containers/route.ts" [label=<route.ts> tooltip="no-orphans" URL="src/app/api/containers/route.ts" fillcolor="#ccffcc" fontcolor="orange" color="orange"] } } } }
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/app" {label="app" subgraph "cluster_src/app/api" {label="api" subgraph "cluster_src/app/api/docker-containers" {label="docker-containers" "src/app/api/docker-containers/route.ts" [label=<route.ts> tooltip="route.ts" URL="src/app/api/docker-containers/route.ts" fillcolor="#ddfeff"] } } } }
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/app" {label="app" subgraph "cluster_src/app/api" {label="api" subgraph "cluster_src/app/api/docker-dev-server" {label="docker-dev-server" "src/app/api/docker-dev-server/route.ts" [label=<route.ts> tooltip="no-orphans" URL="src/app/api/docker-dev-server/route.ts" fillcolor="#ccffcc" fontcolor="orange" color="orange"] } } } }
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/app" {label="app" subgraph "cluster_src/app/api" {label="api" subgraph "cluster_src/app/api/docker-status" {label="docker-status" "src/app/api/docker-status/route.ts" [label=<route.ts> tooltip="route.ts" URL="src/app/api/docker-status/route.ts" fillcolor="#ddfeff"] } } } }
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/app" {label="app" subgraph "cluster_src/app/api" {label="api" subgraph "cluster_src/app/api/docker" {label="docker" "src/app/api/docker/route.ts" [label=<route.ts> tooltip="route.ts" URL="src/app/api/docker/route.ts" fillcolor="#ddfeff"] } } } }
+    "src/app/api/docker/route.ts" -> "src/lib/docker/index.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/app" {label="app" subgraph "cluster_src/app/api" {label="api" subgraph "cluster_src/app/api/health" {label="health" "src/app/api/health/route.ts" [label=<route.ts> tooltip="no-orphans" URL="src/app/api/health/route.ts" fillcolor="#ccffcc" fontcolor="orange" color="orange"] } } } }
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/app" {label="app" subgraph "cluster_src/app/api" {label="api" subgraph "cluster_src/app/api/project" {label="project" "src/app/api/project/route.ts" [label=<route.ts> tooltip="no-orphans" URL="src/app/api/project/route.ts" fillcolor="#ccffcc" fontcolor="orange" color="orange"] } } } }
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/app" {label="app" subgraph "cluster_src/app/components" {label="components" subgraph "cluster_src/app/components/Chat" {label="Chat" "src/app/components/Chat/ChatInterface.tsx" [label=<ChatInterface.tsx> tooltip="ChatInterface.tsx" URL="src/app/components/Chat/ChatInterface.tsx" fillcolor="#bbfeff"] } } } }
+    "src/app/components/Chat/ChatInterface.tsx" -> "src/lib/docker/smart-status-manager.ts" [style="dashed"]
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/app" {label="app" subgraph "cluster_src/app/components" {label="components" subgraph "cluster_src/app/components/Chat" {label="Chat" "src/app/components/Chat/ChatMessages.tsx" [label=<ChatMessages.tsx> tooltip="ChatMessages.tsx" URL="src/app/components/Chat/ChatMessages.tsx" fillcolor="#bbfeff"] } } } }
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/app" {label="app" subgraph "cluster_src/app/components" {label="components" subgraph "cluster_src/app/components/Chat" {label="Chat" "src/app/components/Chat/MessageInput.tsx" [label=<MessageInput.tsx> tooltip="MessageInput.tsx" URL="src/app/components/Chat/MessageInput.tsx" fillcolor="#bbfeff"] } } } }
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/app" {label="app" subgraph "cluster_src/app/components" {label="components" subgraph "cluster_src/app/components/Chat" {label="Chat" "src/app/components/Chat/index.ts" [label=<index.ts> tooltip="index.ts" URL="src/app/components/Chat/index.ts" fillcolor="#ddfeff"] } } } }
+    "src/app/components/Chat/index.ts" -> "src/app/components/Chat/ChatInterface.tsx" [arrowhead="inv"]
+    "src/app/components/Chat/index.ts" -> "src/app/components/Chat/ChatMessages.tsx" [arrowhead="inv"]
+    "src/app/components/Chat/index.ts" -> "src/app/components/Chat/MessageInput.tsx" [arrowhead="inv"]
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/app" {label="app" subgraph "cluster_src/app/components" {label="components" "src/app/components/DockerStatusWrapper.tsx" [label=<DockerStatusWrapper.tsx> tooltip="DockerStatusWrapper.tsx" URL="src/app/components/DockerStatusWrapper.tsx" fillcolor="#bbfeff"] } } }
+    "src/app/components/DockerStatusWrapper.tsx" -> "src/components/DockerStatusMonitor.tsx" [style="dashed"]
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/app" {label="app" subgraph "cluster_src/app/components" {label="components" subgraph "cluster_src/app/components/Project" {label="Project" "src/app/components/Project/PreviewPanel.tsx" [label=<PreviewPanel.tsx> tooltip="PreviewPanel.tsx" URL="src/app/components/Project/PreviewPanel.tsx" fillcolor="#bbfeff"] } } } }
+    "src/app/components/Project/PreviewPanel.tsx" -> "src/lib/docker/smart-status-manager.ts" [style="dashed"]
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/app" {label="app" subgraph "cluster_src/app/components" {label="components" subgraph "cluster_src/app/components/Project" {label="Project" "src/app/components/Project/ProjectCard.tsx" [label=<ProjectCard.tsx> tooltip="ProjectCard.tsx" URL="src/app/components/Project/ProjectCard.tsx" fillcolor="#bbfeff"] } } } }
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/app" {label="app" subgraph "cluster_src/app/components" {label="components" subgraph "cluster_src/app/components/Project" {label="Project" "src/app/components/Project/ProjectDashboard.tsx" [label=<ProjectDashboard.tsx> tooltip="ProjectDashboard.tsx" URL="src/app/components/Project/ProjectDashboard.tsx" fillcolor="#bbfeff"] } } } }
+    "src/app/components/Project/ProjectDashboard.tsx" -> "src/app/components/Project/ProjectCard.tsx"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/app" {label="app" subgraph "cluster_src/app/components" {label="components" subgraph "cluster_src/app/components/Project" {label="Project" "src/app/components/Project/ProjectFilters.tsx" [label=<ProjectFilters.tsx> tooltip="ProjectFilters.tsx" URL="src/app/components/Project/ProjectFilters.tsx" fillcolor="#bbfeff"] } } } }
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/app" {label="app" subgraph "cluster_src/app/components" {label="components" subgraph "cluster_src/app/components/Project" {label="Project" "src/app/components/Project/ProjectHeader.tsx" [label=<ProjectHeader.tsx> tooltip="ProjectHeader.tsx" URL="src/app/components/Project/ProjectHeader.tsx" fillcolor="#bbfeff"] } } } }
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/app" {label="app" subgraph "cluster_src/app/components" {label="components" subgraph "cluster_src/app/components/Project" {label="Project" "src/app/components/Project/index.ts" [label=<index.ts> tooltip="index.ts" URL="src/app/components/Project/index.ts" fillcolor="#ddfeff"] } } } }
+    "src/app/components/Project/index.ts" -> "src/app/components/Project/PreviewPanel.tsx" [arrowhead="inv"]
+    "src/app/components/Project/index.ts" -> "src/app/components/Project/ProjectCard.tsx" [arrowhead="inv"]
+    "src/app/components/Project/index.ts" -> "src/app/components/Project/ProjectDashboard.tsx" [arrowhead="inv"]
+    "src/app/components/Project/index.ts" -> "src/app/components/Project/ProjectFilters.tsx" [arrowhead="inv"]
+    "src/app/components/Project/index.ts" -> "src/app/components/Project/ProjectHeader.tsx" [arrowhead="inv"]
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/app" {label="app" subgraph "cluster_src/app/components" {label="components" subgraph "cluster_src/app/components/Todo" {label="Todo" "src/app/components/Todo/TodoList.tsx" [label=<TodoList.tsx> tooltip="TodoList.tsx" URL="src/app/components/Todo/TodoList.tsx" fillcolor="#bbfeff"] } } } }
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/app" {label="app" subgraph "cluster_src/app/components" {label="components" subgraph "cluster_src/app/components/Todo" {label="Todo" "src/app/components/Todo/index.ts" [label=<index.ts> tooltip="index.ts" URL="src/app/components/Todo/index.ts" fillcolor="#ddfeff"] } } } }
+    "src/app/components/Todo/index.ts" -> "src/app/components/Todo/TodoList.tsx" [arrowhead="inv"]
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/app" {label="app" subgraph "cluster_src/app/components" {label="components" "src/app/components/index.ts" [label=<index.ts> tooltip="index.ts" URL="src/app/components/index.ts" fillcolor="#ddfeff"] } } }
+    "src/app/components/index.ts" -> "src/app/components/Chat/index.ts" [arrowhead="inv"]
+    "src/app/components/index.ts" -> "src/app/components/Project/index.ts" [arrowhead="inv"]
+    "src/app/components/index.ts" -> "src/app/components/Todo/index.ts" [arrowhead="inv"]
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/app" {label="app" "src/app/globals.css" [label=<globals.css> tooltip="globals.css" URL="src/app/globals.css" ] } }
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/app" {label="app" "src/app/layout.tsx" [label=<layout.tsx> tooltip="layout.tsx" URL="src/app/layout.tsx" fillcolor="#bbfeff"] } }
+    "src/app/layout.tsx" -> "src/app/globals.css"
+    "src/app/layout.tsx" -> "src/lib/logger.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/app" {label="app" "src/app/page.tsx" [label=<page.tsx> tooltip="page.tsx" URL="src/app/page.tsx" fillcolor="#bbfeff"] } }
+    "src/app/page.tsx" -> "src/app/components/DockerStatusWrapper.tsx"
+    "src/app/page.tsx" -> "src/app/components/Project/ProjectDashboard.tsx"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/app" {label="app" subgraph "cluster_src/app/project" {label="project" subgraph "cluster_src/app/project/[id]" {label="[id]" "src/app/project/[id]/not-found.tsx" [label=<not-found.tsx> tooltip="no-orphans" URL="src/app/project/[id]/not-found.tsx" fillcolor="#ccffcc" fontcolor="orange" color="orange"] } } } }
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/app" {label="app" subgraph "cluster_src/app/project" {label="project" subgraph "cluster_src/app/project/[id]" {label="[id]" "src/app/project/[id]/page.tsx" [label=<page.tsx> tooltip="page.tsx" URL="src/app/project/[id]/page.tsx" fillcolor="#bbfeff"] } } } }
+    "src/app/project/[id]/page.tsx" -> "src/app/components/Chat/ChatInterface.tsx"
+    "src/app/project/[id]/page.tsx" -> "src/app/components/Project/PreviewPanel.tsx"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/components" {label="components" "src/components/DockerStatusMonitor.tsx" [label=<DockerStatusMonitor.tsx> tooltip="DockerStatusMonitor.tsx" URL="src/components/DockerStatusMonitor.tsx" fillcolor="#bbfeff"] } }
+    "src/components/DockerStatusMonitor.tsx" -> "src/app/api/docker-containers/route.ts"
+    "src/components/DockerStatusMonitor.tsx" -> "src/app/api/docker-status/route.ts"
+    "src/components/DockerStatusMonitor.tsx" -> "src/lib/docker/smart-status-manager.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/ai" {label="ai" "src/lib/ai/agent-controller.ts" [label=<agent-controller.ts> tooltip="agent-controller.ts" URL="src/lib/ai/agent-controller.ts" fillcolor="#ddfeff"] } } }
+    "src/lib/ai/agent-controller.ts" -> "src/lib/core/logger.ts"
+    "src/lib/ai/agent-controller.ts" -> "src/lib/docker/tool-registry.ts"
+    "src/lib/ai/agent-controller.ts" -> "src/lib/ai/ai-output-logger.ts"
+    "src/lib/ai/agent-controller.ts" -> "src/lib/ai/openai-service.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/ai" {label="ai" "src/lib/ai/agent-factory.ts" [label=<agent-factory.ts> tooltip="agent-factory.ts" URL="src/lib/ai/agent-factory.ts" fillcolor="#ddfeff"] } } }
+    "src/lib/ai/agent-factory.ts" -> "src/lib/core/logger.ts"
+    "src/lib/ai/agent-factory.ts" -> "src/lib/docker/ai-editor-manager.ts"
+    "src/lib/ai/agent-factory.ts" -> "src/lib/ai/agent-controller.ts"
+    "src/lib/ai/agent-factory.ts" -> "src/lib/ai/ai-output-logger.ts"
+    "src/lib/ai/agent-factory.ts" -> "src/lib/ai/openai-service.ts"
+    "src/lib/ai/agent-factory.ts" -> "src/lib/ai/strict-docker-tools.ts"
+    "src/lib/ai/agent-factory.ts" -> "src/lib/ai/strict-tool-registry.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/ai" {label="ai" "src/lib/ai/ai-output-logger.ts" [label=<ai-output-logger.ts> tooltip="ai-output-logger.ts" URL="src/lib/ai/ai-output-logger.ts" fillcolor="#ddfeff"] } } }
+    "src/lib/ai/ai-output-logger.ts" -> "src/lib/logger.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/ai" {label="ai" "src/lib/ai/chat-agent-integration.ts" [label=<chat-agent-integration.ts> tooltip="chat-agent-integration.ts" URL="src/lib/ai/chat-agent-integration.ts" fillcolor="#ddfeff"] } } }
+    "src/lib/ai/chat-agent-integration.ts" -> "src/lib/docker/ai-editor-manager.ts"
+    "src/lib/ai/chat-agent-integration.ts" -> "src/lib/docker/docker-context-config.ts" [style="dashed"]
+    "src/lib/ai/chat-agent-integration.ts" -> "src/lib/docker/tool-registry.ts"
+    "src/lib/ai/chat-agent-integration.ts" -> "src/lib/docker/tools.ts"
+    "src/lib/ai/chat-agent-integration.ts" -> "src/lib/logger.ts"
+    "src/lib/ai/chat-agent-integration.ts" -> "src/lib/ai/agent-controller.ts"
+    "src/lib/ai/chat-agent-integration.ts" -> "src/lib/ai/enhanced-tool-registry.ts"
+    "src/lib/ai/chat-agent-integration.ts" -> "src/lib/ai/openai-service.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/ai" {label="ai" "src/lib/ai/context-manager.ts" [label=<context-manager.ts> tooltip="context-manager.ts" URL="src/lib/ai/context-manager.ts" fillcolor="#ddfeff"] } } }
+    "src/lib/ai/context-manager.ts" -> "src/lib/docker/tools.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/ai" {label="ai" "src/lib/ai/docker-security-validator.ts" [label=<docker-security-validator.ts> tooltip="docker-security-validator.ts" URL="src/lib/ai/docker-security-validator.ts" fillcolor="#ddfeff"] } } }
+    "src/lib/ai/docker-security-validator.ts" -> "src/lib/docker/tools.ts"
+    "src/lib/ai/docker-security-validator.ts" -> "src/lib/logger.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/ai" {label="ai" "src/lib/ai/enhanced-context-manager.ts" [label=<enhanced-context-manager.ts> tooltip="enhanced-context-manager.ts" URL="src/lib/ai/enhanced-context-manager.ts" fillcolor="#ddfeff"] } } }
+    "src/lib/ai/enhanced-context-manager.ts" -> "src/lib/ai/context-manager.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/ai" {label="ai" "src/lib/ai/enhanced-prompts.ts" [label=<enhanced-prompts.ts> tooltip="enhanced-prompts.ts" URL="src/lib/ai/enhanced-prompts.ts" fillcolor="#ddfeff"] } } }
+    "src/lib/ai/enhanced-prompts.ts" -> "src/lib/ai/enhanced-tool-schemas.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/ai" {label="ai" "src/lib/ai/enhanced-tool-registry.ts" [label=<enhanced-tool-registry.ts> tooltip="enhanced-tool-registry.ts" URL="src/lib/ai/enhanced-tool-registry.ts" fillcolor="#ddfeff"] } } }
+    "src/lib/ai/enhanced-tool-registry.ts" -> "src/lib/docker/ai-editor-manager.ts"
+    "src/lib/ai/enhanced-tool-registry.ts" -> "src/lib/logger.ts"
+    "src/lib/ai/enhanced-tool-registry.ts" -> "src/lib/ai/agent-controller.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/ai" {label="ai" "src/lib/ai/enhanced-tool-schemas.ts" [label=<enhanced-tool-schemas.ts> tooltip="enhanced-tool-schemas.ts" URL="src/lib/ai/enhanced-tool-schemas.ts" fillcolor="#ddfeff"] } } }
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/ai" {label="ai" "src/lib/ai/index.ts" [label=<index.ts> tooltip="index.ts" URL="src/lib/ai/index.ts" fillcolor="#ddfeff"] } } }
+    "src/lib/ai/index.ts" -> "src/lib/functions/migration-manager.ts"
+    "src/lib/ai/index.ts" -> "src/lib/ai/agent-controller.ts" [arrowhead="inv"]
+    "src/lib/ai/index.ts" -> "src/lib/ai/agent-factory.ts" [arrowhead="inv"]
+    "src/lib/ai/index.ts" -> "src/lib/ai/ai-output-logger.ts" [arrowhead="inv"]
+    "src/lib/ai/index.ts" -> "src/lib/ai/chat-agent-integration.ts" [arrowhead="inv"]
+    "src/lib/ai/index.ts" -> "src/lib/ai/context-manager.ts" [arrowhead="inv"]
+    "src/lib/ai/index.ts" -> "src/lib/ai/docker-security-validator.ts" [arrowhead="inv"]
+    "src/lib/ai/index.ts" -> "src/lib/ai/enhanced-tool-registry.ts" [arrowhead="inv"]
+    "src/lib/ai/index.ts" -> "src/lib/ai/langchain-chat-engine.ts" [arrowhead="inv"]
+    "src/lib/ai/index.ts" -> "src/lib/ai/openai.ts" [arrowhead="inv"]
+    "src/lib/ai/index.ts" -> "src/lib/ai/openai-service.ts" [arrowhead="inv"]
+    "src/lib/ai/index.ts" -> "src/lib/ai/prompt-builder.ts" [arrowhead="inv"]
+    "src/lib/ai/index.ts" -> "src/lib/ai/prompts.ts" [arrowhead="inv"]
+    "src/lib/ai/index.ts" -> "src/lib/ai/secure-chat-agent-integration.ts" [arrowhead="inv"]
+    "src/lib/ai/index.ts" -> "src/lib/ai/strict-agent-factory.ts" [arrowhead="inv"]
+    "src/lib/ai/index.ts" -> "src/lib/ai/strict-docker-tools.ts" [arrowhead="inv"]
+    "src/lib/ai/index.ts" -> "src/lib/ai/strict-tool-registry.ts" [arrowhead="inv"]
+    "src/lib/ai/index.ts" -> "src/lib/ai/tools/index.ts" [arrowhead="inv"]
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/ai" {label="ai" "src/lib/ai/langchain-chat-engine copy.ts" [label=<langchain-chat-engine copy.ts> tooltip="langchain-chat-engine copy.ts" URL="src/lib/ai/langchain-chat-engine copy.ts" fillcolor="#ddfeff"] } } }
+    "src/lib/ai/langchain-chat-engine copy.ts" -> "src/lib/docker/tools.ts"
+    "src/lib/ai/langchain-chat-engine copy.ts" -> "src/lib/ai/context-manager.ts"
+    "src/lib/ai/langchain-chat-engine copy.ts" -> "src/lib/ai/docker-security-validator.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/ai" {label="ai" "src/lib/ai/langchain-chat-engine.ts" [label=<langchain-chat-engine.ts> tooltip="langchain-chat-engine.ts" URL="src/lib/ai/langchain-chat-engine.ts" fillcolor="#ddfeff"] } } }
+    "src/lib/ai/langchain-chat-engine.ts" -> "src/lib/constants.ts"
+    "src/lib/ai/langchain-chat-engine.ts" -> "src/lib/docker/docker-context-config.ts"
+    "src/lib/ai/langchain-chat-engine.ts" -> "src/lib/docker/tools.ts"
+    "src/lib/ai/langchain-chat-engine.ts" -> "src/lib/functions/index.ts"
+    "src/lib/ai/langchain-chat-engine.ts" -> "src/lib/logger.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/ai" {label="ai" "src/lib/ai/langchain-dependencies.ts" [label=<langchain-dependencies.ts> tooltip="no-orphans" URL="src/lib/ai/langchain-dependencies.ts" fillcolor="#ccffcc" fontcolor="orange" color="orange"] } } }
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/ai" {label="ai" "src/lib/ai/openai-service.ts" [label=<openai-service.ts> tooltip="openai-service.ts" URL="src/lib/ai/openai-service.ts" fillcolor="#ddfeff"] } } }
+    "src/lib/ai/openai-service.ts" -> "src/lib/logger.ts"
+    "src/lib/ai/openai-service.ts" -> "src/lib/ai/ai-output-logger.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/ai" {label="ai" "src/lib/ai/openai.ts" [label=<openai.ts> tooltip="openai.ts" URL="src/lib/ai/openai.ts" fillcolor="#ddfeff"] } } }
+    "src/lib/ai/openai.ts" -> "src/lib/core/logger.ts"
+    "src/lib/ai/openai.ts" -> "src/lib/docker/ai-editor-manager.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/ai" {label="ai" "src/lib/ai/prompt-builder.ts" [label=<prompt-builder.ts> tooltip="prompt-builder.ts" URL="src/lib/ai/prompt-builder.ts" fillcolor="#ddfeff"] } } }
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/ai" {label="ai" "src/lib/ai/prompts.ts" [label=<prompts.ts> tooltip="prompts.ts" URL="src/lib/ai/prompts.ts" fillcolor="#ddfeff"] } } }
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/ai" {label="ai" "src/lib/ai/secure-chat-agent-integration.ts" [label=<secure-chat-agent-integration.ts> tooltip="secure-chat-agent-integration.ts" URL="src/lib/ai/secure-chat-agent-integration.ts" fillcolor="#ddfeff"] } } }
+    "src/lib/ai/secure-chat-agent-integration.ts" -> "src/lib/docker/ai-editor-manager.ts"
+    "src/lib/ai/secure-chat-agent-integration.ts" -> "src/lib/logger.ts"
+    "src/lib/ai/secure-chat-agent-integration.ts" -> "src/lib/ai/agent-controller.ts"
+    "src/lib/ai/secure-chat-agent-integration.ts" -> "src/lib/ai/ai-output-logger.ts"
+    "src/lib/ai/secure-chat-agent-integration.ts" -> "src/lib/ai/openai-service.ts"
+    "src/lib/ai/secure-chat-agent-integration.ts" -> "src/lib/ai/strict-agent-factory.ts"
+    "src/lib/ai/secure-chat-agent-integration.ts" -> "src/lib/ai/strict-tool-registry.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/ai" {label="ai" "src/lib/ai/simple-langchain-engine.ts" [label=<simple-langchain-engine.ts> tooltip="simple-langchain-engine.ts" URL="src/lib/ai/simple-langchain-engine.ts" fillcolor="#ddfeff"] } } }
+    "src/lib/ai/simple-langchain-engine.ts" -> "src/lib/docker/simple-docker-tools.ts"
+    "src/lib/ai/simple-langchain-engine.ts" -> "src/lib/logger.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/ai" {label="ai" "src/lib/ai/stable-agent-executor.ts" [label=<stable-agent-executor.ts> tooltip="stable-agent-executor.ts" URL="src/lib/ai/stable-agent-executor.ts" fillcolor="#ddfeff"] } } }
+    "src/lib/ai/stable-agent-executor.ts" -> "src/lib/ai/enhanced-prompts.ts"
+    "src/lib/ai/stable-agent-executor.ts" -> "src/lib/ai/enhanced-tool-schemas.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/ai" {label="ai" "src/lib/ai/strict-agent-factory.ts" [label=<strict-agent-factory.ts> tooltip="strict-agent-factory.ts" URL="src/lib/ai/strict-agent-factory.ts" fillcolor="#ddfeff"] } } }
+    "src/lib/ai/strict-agent-factory.ts" -> "src/lib/docker/ai-editor-manager.ts"
+    "src/lib/ai/strict-agent-factory.ts" -> "src/lib/logger.ts"
+    "src/lib/ai/strict-agent-factory.ts" -> "src/lib/ai/agent-controller.ts"
+    "src/lib/ai/strict-agent-factory.ts" -> "src/lib/ai/ai-output-logger.ts"
+    "src/lib/ai/strict-agent-factory.ts" -> "src/lib/ai/openai-service.ts"
+    "src/lib/ai/strict-agent-factory.ts" -> "src/lib/ai/strict-tool-registry.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/ai" {label="ai" "src/lib/ai/strict-docker-tools.ts" [label=<strict-docker-tools.ts> tooltip="strict-docker-tools.ts" URL="src/lib/ai/strict-docker-tools.ts" fillcolor="#ddfeff"] } } }
+    "src/lib/ai/strict-docker-tools.ts" -> "src/lib/core/logger.ts"
+    "src/lib/ai/strict-docker-tools.ts" -> "src/lib/docker/ai-editor-manager.ts"
+    "src/lib/ai/strict-docker-tools.ts" -> "src/lib/ai/agent-controller.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/ai" {label="ai" "src/lib/ai/strict-tool-registry.ts" [label=<strict-tool-registry.ts> tooltip="strict-tool-registry.ts" URL="src/lib/ai/strict-tool-registry.ts" fillcolor="#ddfeff"] } } }
+    "src/lib/ai/strict-tool-registry.ts" -> "src/lib/core/logger.ts"
+    "src/lib/ai/strict-tool-registry.ts" -> "src/lib/docker/ai-editor-manager.ts"
+    "src/lib/ai/strict-tool-registry.ts" -> "src/lib/ai/agent-controller.ts"
+    "src/lib/ai/strict-tool-registry.ts" -> "src/lib/ai/strict-docker-tools.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/ai" {label="ai" subgraph "cluster_src/lib/ai/tools" {label="tools" "src/lib/ai/tools/index.ts" [label=<index.ts> tooltip="index.ts" URL="src/lib/ai/tools/index.ts" fillcolor="#ddfeff"] } } } }
+    "src/lib/ai/tools/index.ts" -> "src/lib/ai/tools/tool-manager.ts" [arrowhead="inv"]
+    "src/lib/ai/tools/index.ts" -> "src/lib/ai/tools/tool-registry.ts" [arrowhead="inv"]
+    "src/lib/ai/tools/index.ts" -> "src/lib/ai/tools/tool-types.ts" [arrowhead="inv"]
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/ai" {label="ai" subgraph "cluster_src/lib/ai/tools" {label="tools" "src/lib/ai/tools/tool-manager.ts" [label=<tool-manager.ts> tooltip="tool-manager.ts" URL="src/lib/ai/tools/tool-manager.ts" fillcolor="#ddfeff"] } } } }
+    "src/lib/ai/tools/tool-manager.ts" -> "src/lib/core/logger.ts"
+    "src/lib/ai/tools/tool-manager.ts" -> "src/lib/ai/tools/tool-registry.ts"
+    "src/lib/ai/tools/tool-manager.ts" -> "src/lib/ai/tools/tool-types.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/ai" {label="ai" subgraph "cluster_src/lib/ai/tools" {label="tools" "src/lib/ai/tools/tool-registry.ts" [label=<tool-registry.ts> tooltip="tool-registry.ts" URL="src/lib/ai/tools/tool-registry.ts" fillcolor="#ddfeff"] } } } }
+    "src/lib/ai/tools/tool-registry.ts" -> "src/lib/core/logger.ts"
+    "src/lib/ai/tools/tool-registry.ts" -> "src/lib/ai/tools/tool-types.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/ai" {label="ai" subgraph "cluster_src/lib/ai/tools" {label="tools" "src/lib/ai/tools/tool-types.ts" [label=<tool-types.ts> tooltip="tool-types.ts" URL="src/lib/ai/tools/tool-types.ts" fillcolor="#ddfeff"] } } } }
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/ai" {label="ai" "src/lib/ai/unified-ai-agent-integration.ts" [label=<unified-ai-agent-integration.ts> tooltip="unified-ai-agent-integration.ts" URL="src/lib/ai/unified-ai-agent-integration.ts" fillcolor="#ddfeff"] } } }
+    "src/lib/ai/unified-ai-agent-integration.ts" -> "src/lib/functions/index.ts"
+    "src/lib/ai/unified-ai-agent-integration.ts" -> "src/lib/functions/langchain-binder.ts"
+    "src/lib/ai/unified-ai-agent-integration.ts" -> "src/lib/logger.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/chat" {label="chat" "src/lib/chat/chat-context-manager.ts" [label=<chat-context-manager.ts> tooltip="chat-context-manager.ts" URL="src/lib/chat/chat-context-manager.ts" fillcolor="#ddfeff"] } } }
+    "src/lib/chat/chat-context-manager.ts" -> "src/lib/database/chat-storage.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" "src/lib/constants.ts" [label=<constants.ts> tooltip="constants.ts" URL="src/lib/constants.ts" fillcolor="#ddfeff"] } }
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/core" {label="core" "src/lib/core/diff-processor.ts" [label=<diff-processor.ts> tooltip="diff-processor.ts" URL="src/lib/core/diff-processor.ts" fillcolor="#ddfeff"] } } }
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/core" {label="core" "src/lib/core/index.ts" [label=<index.ts> tooltip="index.ts" URL="src/lib/core/index.ts" fillcolor="#ddfeff"] } } }
+    "src/lib/core/index.ts" -> "src/lib/core/diff-processor.ts" [arrowhead="inv"]
+    "src/lib/core/index.ts" -> "src/lib/core/logger.ts" [arrowhead="inv"]
+    "src/lib/core/index.ts" -> "src/lib/core/tool-manager.ts" [arrowhead="inv"]
+    "src/lib/core/index.ts" -> "src/lib/core/tool-types.ts" [arrowhead="inv"]
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/core" {label="core" "src/lib/core/logger.ts" [label=<logger.ts> tooltip="logger.ts" URL="src/lib/core/logger.ts" fillcolor="#ddfeff"] } } }
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/core" {label="core" "src/lib/core/tool-manager.ts" [label=<tool-manager.ts> tooltip="tool-manager.ts" URL="src/lib/core/tool-manager.ts" fillcolor="#ddfeff"] } } }
+    "src/lib/core/tool-manager.ts" -> "src/lib/core/tool-types.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/core" {label="core" "src/lib/core/tool-types.ts" [label=<tool-types.ts> tooltip="tool-types.ts" URL="src/lib/core/tool-types.ts" fillcolor="#ddfeff"] } } }
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/database" {label="database" "src/lib/database/chat-storage.ts" [label=<chat-storage.ts> tooltip="chat-storage.ts" URL="src/lib/database/chat-storage.ts" fillcolor="#ddfeff"] } } }
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/docker" {label="docker" "src/lib/docker/ai-editor-manager.ts" [label=<ai-editor-manager.ts> tooltip="ai-editor-manager.ts" URL="src/lib/docker/ai-editor-manager.ts" fillcolor="#ddfeff"] } } }
+    "src/lib/docker/ai-editor-manager.ts" -> "src/lib/core/logger.ts"
+    "src/lib/docker/ai-editor-manager.ts" -> "src/lib/docker/docker-context-config.ts" [style="dashed"]
+    "src/lib/docker/ai-editor-manager.ts" -> "src/lib/docker/function-schemas.ts"
+    "src/lib/docker/ai-editor-manager.ts" -> "src/lib/docker/tools.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/docker" {label="docker" "src/lib/docker/config-manager.ts" [label=<config-manager.ts> tooltip="config-manager.ts" URL="src/lib/docker/config-manager.ts" fillcolor="#ddfeff"] } } }
+    "src/lib/docker/config-manager.ts" -> "src/lib/core/logger.ts"
+    "src/lib/docker/config-manager.ts" -> "src/lib/docker/tools.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/docker" {label="docker" "src/lib/docker/docker-context-config.ts" [label=<docker-context-config.ts> tooltip="docker-context-config.ts" URL="src/lib/docker/docker-context-config.ts" fillcolor="#ddfeff"] } } }
+    "src/lib/docker/docker-context-config.ts" -> "src/lib/docker/config-manager.ts"
+    "src/lib/docker/docker-context-config.ts" -> "src/lib/docker/tools.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/docker" {label="docker" "src/lib/docker/dynamic-project-tools.ts" [label=<dynamic-project-tools.ts> tooltip="dynamic-project-tools.ts" URL="src/lib/docker/dynamic-project-tools.ts" fillcolor="#ddfeff"] } } }
+    "src/lib/docker/dynamic-project-tools.ts" -> "src/lib/docker/docker-context-config.ts"
+    "src/lib/docker/dynamic-project-tools.ts" -> "src/lib/docker/tools.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/docker" {label="docker" "src/lib/docker/function-schemas.ts" [label=<function-schemas.ts> tooltip="function-schemas.ts" URL="src/lib/docker/function-schemas.ts" fillcolor="#ddfeff"] } } }
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/docker" {label="docker" "src/lib/docker/index-legacy.ts" [label=<index-legacy.ts> tooltip="no-orphans" URL="src/lib/docker/index-legacy.ts" fillcolor="#ccffcc" fontcolor="orange" color="orange"] } } }
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/docker" {label="docker" "src/lib/docker/index.ts" [label=<index.ts> tooltip="index.ts" URL="src/lib/docker/index.ts" fillcolor="#ddfeff"] } } }
+    "src/lib/docker/index.ts" -> "src/lib/docker/ai-editor-manager.ts" [arrowhead="inv"]
+    "src/lib/docker/index.ts" -> "src/lib/docker/config-manager.ts" [arrowhead="inv"]
+    "src/lib/docker/index.ts" -> "src/lib/docker/function-schemas.ts" [arrowhead="inv"]
+    "src/lib/docker/index.ts" -> "src/lib/docker/tool-registry.ts" [arrowhead="inv"]
+    "src/lib/docker/index.ts" -> "src/lib/docker/tools.ts" [arrowhead="inv"]
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/docker" {label="docker" "src/lib/docker/simple-docker-tools.ts" [label=<simple-docker-tools.ts> tooltip="simple-docker-tools.ts" URL="src/lib/docker/simple-docker-tools.ts" fillcolor="#ddfeff"] } } }
+    "src/lib/docker/simple-docker-tools.ts" -> "src/lib/logger.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/docker" {label="docker" "src/lib/docker/smart-port-manager.ts" [label=<smart-port-manager.ts> tooltip="no-orphans" URL="src/lib/docker/smart-port-manager.ts" fillcolor="#ccffcc" fontcolor="orange" color="orange"] } } }
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/docker" {label="docker" "src/lib/docker/smart-status-manager.ts" [label=<smart-status-manager.ts> tooltip="smart-status-manager.ts" URL="src/lib/docker/smart-status-manager.ts" fillcolor="#ddfeff"] } } }
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/docker" {label="docker" "src/lib/docker/tool-registry.ts" [label=<tool-registry.ts> tooltip="tool-registry.ts" URL="src/lib/docker/tool-registry.ts" fillcolor="#ddfeff"] } } }
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/docker" {label="docker" "src/lib/docker/tools.ts" [label=<tools.ts> tooltip="tools.ts" URL="src/lib/docker/tools.ts" fillcolor="#ddfeff"] } } }
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/functions" {label="functions" subgraph "cluster_src/lib/functions/ai" {label="ai" "src/lib/functions/ai/index.ts" [label=<index.ts> tooltip="index.ts" URL="src/lib/functions/ai/index.ts" fillcolor="#ddfeff"] } } } }
+    "src/lib/functions/ai/index.ts" -> "src/lib/functions/categories.ts"
+    "src/lib/functions/ai/index.ts" -> "src/lib/functions/types.ts" [arrowhead="onormal" penwidth="1.0"]
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/functions" {label="functions" "src/lib/functions/categories.ts" [label=<categories.ts> tooltip="categories.ts" URL="src/lib/functions/categories.ts" fillcolor="#ddfeff"] } } }
+    "src/lib/functions/categories.ts" -> "src/lib/functions/types.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/functions" {label="functions" subgraph "cluster_src/lib/functions/docker" {label="docker" "src/lib/functions/docker/index.ts" [label=<index.ts> tooltip="index.ts" URL="src/lib/functions/docker/index.ts" fillcolor="#ddfeff"] } } } }
+    "src/lib/functions/docker/index.ts" -> "src/lib/docker/docker-context-config.ts"
+    "src/lib/functions/docker/index.ts" -> "src/lib/docker/tools.ts"
+    "src/lib/functions/docker/index.ts" -> "src/lib/logger.ts"
+    "src/lib/functions/docker/index.ts" -> "src/lib/functions/categories.ts" [arrowhead="onormal" penwidth="1.0"]
+    "src/lib/functions/docker/index.ts" -> "src/lib/functions/types.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/functions" {label="functions" "src/lib/functions/executor.ts" [label=<executor.ts> tooltip="executor.ts" URL="src/lib/functions/executor.ts" fillcolor="#ddfeff"] } } }
+    "src/lib/functions/executor.ts" -> "src/lib/functions/types.ts" [arrowhead="onormal" penwidth="1.0"]
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/functions" {label="functions" subgraph "cluster_src/lib/functions/filesystem" {label="filesystem" "src/lib/functions/filesystem/index.ts" [label=<index.ts> tooltip="index.ts" URL="src/lib/functions/filesystem/index.ts" fillcolor="#ddfeff"] } } } }
+    "src/lib/functions/filesystem/index.ts" -> "src/lib/functions/categories.ts" [arrowhead="onormal" penwidth="1.0"]
+    "src/lib/functions/filesystem/index.ts" -> "src/lib/functions/types.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/functions" {label="functions" "src/lib/functions/index.ts" [label=<index.ts> tooltip="index.ts" URL="src/lib/functions/index.ts" fillcolor="#ddfeff"] } } }
+    "src/lib/functions/index.ts" -> "src/lib/functions/ai/index.ts"
+    "src/lib/functions/index.ts" -> "src/lib/functions/categories.ts"
+    "src/lib/functions/index.ts" -> "src/lib/functions/docker/index.ts"
+    "src/lib/functions/index.ts" -> "src/lib/functions/executor.ts" [arrowhead="inv"]
+    "src/lib/functions/index.ts" -> "src/lib/functions/filesystem/index.ts"
+    "src/lib/functions/index.ts" -> "src/lib/functions/network/index.ts"
+    "src/lib/functions/index.ts" -> "src/lib/functions/project/index.ts"
+    "src/lib/functions/index.ts" -> "src/lib/functions/registry.ts" [arrowhead="inv"]
+    "src/lib/functions/index.ts" -> "src/lib/functions/system/index.ts"
+    "src/lib/functions/index.ts" -> "src/lib/functions/tool-list.ts" [arrowhead="inv"]
+    "src/lib/functions/index.ts" -> "src/lib/functions/types.ts" [arrowhead="inv"]
+    "src/lib/functions/index.ts" -> "src/lib/functions/utility/index.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/functions" {label="functions" "src/lib/functions/langchain-binder.ts" [label=<langchain-binder.ts> tooltip="langchain-binder.ts" URL="src/lib/functions/langchain-binder.ts" fillcolor="#ddfeff"] } } }
+    "src/lib/functions/langchain-binder.ts" -> "src/lib/functions/index.ts"
+    "src/lib/functions/langchain-binder.ts" -> "src/lib/functions/types.ts" [arrowhead="onormal" penwidth="1.0"]
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/functions" {label="functions" "src/lib/functions/migration-manager.ts" [label=<migration-manager.ts> tooltip="migration-manager.ts" URL="src/lib/functions/migration-manager.ts" fillcolor="#ddfeff"] } } }
+    "src/lib/functions/migration-manager.ts" -> "src/lib/functions/categories.ts"
+    "src/lib/functions/migration-manager.ts" -> "src/lib/functions/types.ts" [arrowhead="onormal" penwidth="1.0"]
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/functions" {label="functions" subgraph "cluster_src/lib/functions/network" {label="network" "src/lib/functions/network/index.ts" [label=<index.ts> tooltip="index.ts" URL="src/lib/functions/network/index.ts" fillcolor="#ddfeff"] } } } }
+    "src/lib/functions/network/index.ts" -> "src/lib/functions/categories.ts" [arrowhead="onormal" penwidth="1.0"]
+    "src/lib/functions/network/index.ts" -> "src/lib/functions/types.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/functions" {label="functions" subgraph "cluster_src/lib/functions/project" {label="project" "src/lib/functions/project/index.ts" [label=<index.ts> tooltip="index.ts" URL="src/lib/functions/project/index.ts" fillcolor="#ddfeff"] } } } }
+    "src/lib/functions/project/index.ts" -> "src/lib/functions/categories.ts"
+    "src/lib/functions/project/index.ts" -> "src/lib/functions/types.ts" [arrowhead="onormal" penwidth="1.0"]
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/functions" {label="functions" "src/lib/functions/registry.ts" [label=<registry.ts> tooltip="registry.ts" URL="src/lib/functions/registry.ts" fillcolor="#ddfeff"] } } }
+    "src/lib/functions/registry.ts" -> "src/lib/functions/types.ts" [arrowhead="onormal" penwidth="1.0"]
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/functions" {label="functions" subgraph "cluster_src/lib/functions/system" {label="system" "src/lib/functions/system/index.ts" [label=<index.ts> tooltip="index.ts" URL="src/lib/functions/system/index.ts" fillcolor="#ddfeff"] } } } }
+    "src/lib/functions/system/index.ts" -> "src/lib/functions/categories.ts"
+    "src/lib/functions/system/index.ts" -> "src/lib/functions/types.ts" [arrowhead="onormal" penwidth="1.0"]
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/functions" {label="functions" "src/lib/functions/tool-list.ts" [label=<tool-list.ts> tooltip="tool-list.ts" URL="src/lib/functions/tool-list.ts" fillcolor="#ddfeff"] } } }
+    "src/lib/functions/tool-list.ts" -> "src/lib/functions/types.ts" [arrowhead="onormal" penwidth="1.0"]
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/functions" {label="functions" "src/lib/functions/types.ts" [label=<types.ts> tooltip="types.ts" URL="src/lib/functions/types.ts" fillcolor="#ddfeff"] } } }
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/functions" {label="functions" "src/lib/functions/usage-examples.ts" [label=<usage-examples.ts> tooltip="no-orphans" URL="src/lib/functions/usage-examples.ts" fillcolor="#ccffcc" fontcolor="orange" color="orange"] } } }
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/functions" {label="functions" subgraph "cluster_src/lib/functions/utility" {label="utility" "src/lib/functions/utility/diff-tool.ts" [label=<diff-tool.ts> tooltip="diff-tool.ts" URL="src/lib/functions/utility/diff-tool.ts" fillcolor="#ddfeff"] } } } }
+    "src/lib/functions/utility/diff-tool.ts" -> "src/lib/docker/tools.ts"
+    "src/lib/functions/utility/diff-tool.ts" -> "src/lib/functions/types.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" subgraph "cluster_src/lib/functions" {label="functions" subgraph "cluster_src/lib/functions/utility" {label="utility" "src/lib/functions/utility/index.ts" [label=<index.ts> tooltip="index.ts" URL="src/lib/functions/utility/index.ts" fillcolor="#ddfeff"] } } } }
+    "src/lib/functions/utility/index.ts" -> "src/lib/functions/categories.ts" [arrowhead="onormal" penwidth="1.0"]
+    "src/lib/functions/utility/index.ts" -> "src/lib/functions/types.ts"
+    "src/lib/functions/utility/index.ts" -> "src/lib/functions/utility/diff-tool.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" "src/lib/index.ts" [label=<index.ts> tooltip="index.ts" URL="src/lib/index.ts" fillcolor="#ddfeff"] } }
+    "src/lib/index.ts" -> "src/lib/ai/index.ts" [arrowhead="inv"]
+    "src/lib/index.ts" -> "src/lib/ai/context-manager.ts" [arrowhead="inv"]
+    "src/lib/index.ts" -> "src/lib/core/index.ts" [arrowhead="inv"]
+    "src/lib/index.ts" -> "src/lib/core/logger.ts" [arrowhead="inv"]
+    "src/lib/index.ts" -> "src/lib/core/tool-manager.ts" [arrowhead="inv"]
+    "src/lib/index.ts" -> "src/lib/core/tool-types.ts" [arrowhead="onormal" penwidth="1.0"]
+    "src/lib/index.ts" -> "src/lib/docker/index.ts" [arrowhead="inv"]
+    "src/lib/index.ts" -> "src/lib/docker/tools.ts" [arrowhead="inv"]
+    "src/lib/index.ts" -> "src/lib/functions/index.ts" [arrowhead="inv"]
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" "src/lib/logger.ts" [label=<logger.ts> tooltip="logger.ts" URL="src/lib/logger.ts" fillcolor="#ddfeff"] } }
+    "src/lib/logger.ts" -> "src/lib/core/logger.ts"
+    subgraph "cluster_src" {label="src" subgraph "cluster_src/lib" {label="lib" "src/lib/silent-logger.js" [label=<silent-logger.js> tooltip="no-orphans" URL="src/lib/silent-logger.js" fillcolor="#ccffcc" fontcolor="orange" color="orange"] } }
+    subgraph "cluster_src" {label="src" "src/middleware.ts" [label=<middleware.ts> tooltip="no-orphans" URL="src/middleware.ts" fillcolor="#ccffcc" fontcolor="orange" color="orange"] }
+}
