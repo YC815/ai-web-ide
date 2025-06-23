@@ -48,7 +48,7 @@ const ProjectStatusIndicator = ({ projectName }: { projectName: string }) => {
       <div className="flex items-center space-x-2">
         <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
         <span className="text-sm text-blue-700 dark:text-blue-300">
-          🤖 AI 已連接到專案 "{projectName}" - 具備完整專案理解能力
+          🤖 AI 已連接到專案 &quot;{projectName}&quot; - 具備完整專案理解能力
         </span>
       </div>
     </div>
@@ -410,8 +410,8 @@ export function ChatInterface({
   const [maxAutoFixIterations] = useState(10); // 最大迭代次數防止無限循環
   
   // 新增 Agent 控制框架模式
-  const [useAgentFramework, setUseAgentFramework] = useState(true); // 預設啟用 Agent 框架
-  const [agentStats, setAgentStats] = useState<any>(null);
+  // const [useAgentFramework, setUseAgentFramework] = useState(true); // 預設啟用 Agent 框架
+  // const [agentStats, setAgentStats] = useState<any>(null);
   
   // 生成唯一ID，避免hydration錯誤
   const generateId = (prefix: string) => {
@@ -467,10 +467,10 @@ export function ChatInterface({
       if (response.ok) {
         const result = await response.json();
         if (result.success && result.data.rooms && result.data.rooms.length > 0) {
-          const windows: ChatWindow[] = result.data.rooms.map((room: any) => ({
+          const windows: ChatWindow[] = result.data.rooms.map((room: ChatWindow) => ({
             id: room.id,
             title: room.title,
-            messages: room.messages.map((msg: any) => ({
+            messages: room.messages.map((msg: ChatMessage) => ({
               id: msg.id,
               role: msg.role,
               content: msg.content,

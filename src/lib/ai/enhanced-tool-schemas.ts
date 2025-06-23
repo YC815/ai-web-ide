@@ -154,11 +154,13 @@ export const DOCKER_LS_SCHEMA: EnhancedToolSchema = {
     long: z.boolean()
       .describe('-l, 使用長格式顯示詳細資訊')
       .default(false)
-      .optional(),
+      .optional()
+      .nullable(),
     all: z.boolean()
       .describe('-a, 顯示隱藏檔案')
       .default(false)
       .optional()
+      .nullable()
   }),
   
   examples: [

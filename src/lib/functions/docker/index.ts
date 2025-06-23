@@ -836,7 +836,7 @@ export const dockerReadFile: FunctionDefinition = {
   id: 'docker_read_file',
   schema: {
     name: 'docker_read_file',
-    description: '讀取 Docker 容器內的檔案內容',
+    description: '讀取 Docker 容器內 /app 目錄中指定檔案的內容。',
     parameters: {
       type: 'object',
       properties: {
@@ -902,22 +902,27 @@ export const dockerLs: FunctionDefinition = {
       type: 'object',
       properties: {
         path: {
-          type: 'string',
-          description: '要列出內容的目錄路徑，預設為當前工作目錄 "."。',
-          default: '.'
+          type: ['string', 'null'],
+          description: '目錄路徑，預設為當前目錄'
         },
         long: {
-          type: 'boolean',
-          description: '是否使用長格式 (-l) 顯示詳細資訊。',
-          default: false
+          type: ['boolean', 'null'],
+          description: '-l, 長格式顯示'
         },
         all: {
-          type: 'boolean',
-          description: '是否顯示所有檔案，包括隱藏檔案 (-a)。',
-          default: false
+          type: ['boolean', 'null'],
+          description: '-a, 顯示隱藏檔案'
+        },
+        recursive: {
+          type: ['boolean', 'null'],
+          description: '-R, 遞迴列出'
+        },
+        human: {
+          type: ['boolean', 'null'],
+          description: '-h, 人類可讀的檔案大小'
         }
       },
-      required: ['path']
+      required: []
     }
   },
   metadata: {
@@ -937,6 +942,8 @@ export const dockerLs: FunctionDefinition = {
         path: parameters.path as string,
         long: parameters.long as boolean,
         all: parameters.all as boolean,
+        recursive: parameters.recursive as boolean,
+        human: parameters.human as boolean,
       }, context);
 
       if (!result.success) {
